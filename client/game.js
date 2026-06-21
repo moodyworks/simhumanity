@@ -416,10 +416,19 @@ function showMerchant(msg) {
     `<span class="claim-basis">${s.price} coin each</span></div>` +
     `<div class="claim-controls"><button class="claim-btn" ` +
     `onclick="barter('sell','${s.item}')">Sell</button></div></div>`).join("");
+  const plans = (msg.plans || []).map((pl) => {
+    const btn = pl.known
+      ? `<span class="claim-basis">known</span>`
+      : `<button class="claim-btn" onclick="barter('plan','${pl.type}')">Learn (${pl.price})</button>`;
+    return `<div class="claim"><div class="claim-text">📜 ${esc(pl.label)} plan ` +
+      `<span class="claim-basis">${pl.price} coin</span></div>` +
+      `<div class="claim-controls">${btn}</div></div>`;
+  }).join("");
   const el = document.getElementById("legend");
   el.innerHTML =
     `<div class="legend-title">${esc(msg.name)} &nbsp;·&nbsp; your coin: ${msg.coin}</div>` +
     `<div class="legend-body" style="font-style:normal">“${esc(msg.line)}”</div>` +
+    (plans ? `<div class="claims-head">Build plans</div><div class="claims">${plans}</div>` : "") +
     `<div class="claims-head">Wares for sale</div><div class="claims">${buy || "<div class='legend-hint'>Nothing today.</div>"}</div>` +
     `<div class="claims-head">Sell your goods</div><div class="claims">${sell || "<div class='legend-hint'>Your pack is empty.</div>"}</div>` +
     `<div class="legend-close" onclick="closeDialogue()">✕ leave</div>`;
@@ -592,6 +601,24 @@ function draw() {
       ctx.font = "bold 11px monospace";
       ctx.textAlign = "center";
       ctx.fillText("☠", cx, cy + 4);
+    } else if (en.kind === "monster") {
+      ctx.fillStyle = en.hostile ? "#7b4fb0" : "#3f6f74";
+      ctx.beginPath();
+      ctx.arc(cx, cy, TILE * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = ctx.fillStyle;     // a few tentacles
+      ctx.lineWidth = 2;
+      for (let a = 0; a < 6; a++) {
+        const ang = (Math.PI * 2 * a) / 6;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(ang) * TILE * 0.35, cy + Math.sin(ang) * TILE * 0.35);
+        ctx.lineTo(cx + Math.cos(ang) * TILE * 0.6, cy + Math.sin(ang) * TILE * 0.6);
+        ctx.stroke();
+      }
+      ctx.fillStyle = "#f0e8ff";
+      ctx.font = "bold 10px monospace";
+      ctx.textAlign = "center";
+      ctx.fillText(en.name[0], cx, cy + 3);
     } else { // wanderer
       ctx.fillStyle = "#5aa6c0";
       ctx.beginPath();
@@ -796,7 +823,8 @@ canvas.addEventListener("click", (e) => {
   const self = me();
   const en = (state.entities || []).find((q) => q.x === tx && q.y === ty);
   if (en && self && Math.abs(en.x - self.x) + Math.abs(en.y - self.y) <= 1) {
-    sendAction({ action: en.kind === "brigand" ? "attack" : "interact" });
+    const hostile = en.kind === "brigand" || en.kind === "monster";
+    sendAction({ action: hostile ? "attack" : "interact" });
     return;
   }
   closeDialogue();

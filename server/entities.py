@@ -20,6 +20,8 @@ WANDERER_LINES = [
     "Dig where the ground forgets to grow — that's where the past is buried.",
 ]
 BRIGAND_NAMES = ["Cutthroat", "Reaver", "Marauder", "Footpad", "Raider", "Rogue"]
+MONSTER_NAMES = ["Kraken", "Leviathan", "Giant Squid", "Scylla", "Hydra",
+                 "Sea Serpent", "Cetus", "Charybdis"]
 
 
 @dataclass
@@ -61,3 +63,12 @@ def make_brigand(eid: str, x: int, y: int, rng: random.Random) -> Entity:
     return Entity(eid, "brigand", rng.choice(BRIGAND_NAMES), x, y,
                   hp=hp, max_hp=hp, atk=rng.randint(4, 8), spot=6,
                   data={"loot_coin": rng.randint(3, 12)})
+
+
+def make_monster(eid: str, x: int, y: int, rng: random.Random) -> Entity:
+    """A mythological sea beast — tougher than any brigand, and only a threat to
+    those who venture onto the water."""
+    hp = rng.randint(40, 75)
+    return Entity(eid, "monster", rng.choice(MONSTER_NAMES), x, y,
+                  hp=hp, max_hp=hp, atk=rng.randint(8, 15), spot=7,
+                  data={"loot_coin": rng.randint(10, 30)})

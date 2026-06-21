@@ -11,11 +11,13 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from . import economy
-from .entities import Entity, make_brigand, make_merchant, make_wanderer
+from .entities import (Entity, make_brigand, make_merchant, make_monster,
+                       make_wanderer)
 from .eventlog import EventLog
 from .landmarks import SITES, site_questions, to_tile
 from .mapdata import LEGEND, build_terrain
-from .plans import PLANS, RUIN_TEACHABLE, SITE_TEACHES, STARTING_PLANS, plan_public
+from .plans import (COASTAL_PLANS, PLAN_PRICE, PLANS, RUIN_TEACHABLE,
+                    SITE_TEACHES, STARTING_PLANS, plan_public)
 from .quests import public_claim
 
 
@@ -524,13 +526,34 @@ class World:
                 return x, y
         return self._spawn_point()
 
+    def _rand_water(self, rng: random.Random) -> tuple[int, int] | None:
+        for _ in range(400):
+            x, y = rng.randrange(self.width), rng.randrange(self.height)
+            if self.tiles[y][x].terrain == Terrain.WATER:
+                return x, y
+        return None
+
+    def _rand_coast(self, rng: random.Random) -> tuple[int, int] | None:
+        for _ in range(400):
+            x, y = rng.randrange(self.width), rng.randrange(self.height)
+            if (self.tiles[y][x].terrain in WALKABLE
+                    and self._near_water(self.tiles, x, y)):
+                return x, y
+        return None
+
     def _spawn_entities(self) -> None:
         rng = random.Random(self.seed ^ 0xBEEF)
         self._erng = random.Random(self.seed ^ 0xC0FFEE)
-        for _ in range(14):
-            x, y = self._rand_land(rng)
+        for i in range(14):
+            # Force ~5 of them onto the coast (shipwrights with boat plans);
+            # the rest are ordinary inland traders.
+            coastal = i < 5
+            x, y = (self._rand_coast(rng) if coastal else None) or self._rand_land(rng)
             e = make_merchant(self._new_eid(), x, y, rng)
             e.data["wares"] = list(economy.MERCHANT_WARES)
+            if coastal or self._near_water(self.tiles, x, y):
+                e.data["plans_for_sale"] = list(COASTAL_PLANS)
+                e.name = e.name.replace("the Trader", "the Shipwright")
             self.entities[e.eid] = e
         for _ in range(18):
             x, y = self._rand_land(rng)
@@ -540,6 +563,11 @@ class World:
             x, y = self._rand_land(rng)
             e = make_brigand(self._new_eid(), x, y, rng)
             self.entities[e.eid] = e
+        for _ in range(12):  # mythological beasts of the deep
+            wxy = self._rand_water(rng)
+            if wxy:
+                e = make_monster(self._new_eid(), wxy[0], wxy[1], rng)
+                self.entities[e.eid] = e
 
     def _land_step(self, e: Entity, nx: int, ny: int) -> None:
         if (0 <= nx < self.width and 0 <= ny < self.height
@@ -550,6 +578,19 @@ class World:
         if self._erng.random() < 0.28:
             dx, dy = self._erng.choice([(1, 0), (-1, 0), (0, 1), (0, -1)])
             self._land_step(e, e.x + dx, e.y + dy)
+
+    def _water_step(self, e: Entity, nx: int, ny: int) -> None:
+        if (0 <= nx < self.width and 0 <= ny < self.height
+                and self.tiles[ny][nx].terrain == Terrain.WATER):
+            e.x, e.y = nx, ny
+
+    def _wander_water(self, e: Entity) -> None:
+        if self._erng.random() < 0.4:
+            dx, dy = self._erng.choice([(1, 0), (-1, 0), (0, 1), (0, -1)])
+            self._water_step(e, e.x + dx, e.y + dy)
+
+    def _on_water(self, p: Player) -> bool:
+        return self.tiles[p.y][p.x].terrain == Terrain.WATER
 
     def _nearest_player(self, x: int, y: int, maxd: int) -> Player | None:
         best = None
@@ -567,6 +608,8 @@ class World:
                 e.cooldown -= 1
             if e.kind == "brigand":
                 self._update_brigand(e)
+            elif e.kind == "monster":
+                self._update_monster(e)
             else:
                 self._wander(e)
 
@@ -598,6 +641,43 @@ class World:
                 self._land_step(e, e.x + sx, e.y)
             if (e.x, e.y) == before and sy:
                 self._land_step(e, e.x, e.y + sy)
+
+    def _update_monster(self, e: Entity) -> None:
+        """A sea beast hunts only players who are out on the water (in a boat),
+        and never leaves the sea — so the shore is always safe from it."""
+        tgt = None
+        if e.target_pid in self.players:
+            p = self.players[e.target_pid]
+            if self._on_water(p) and abs(p.x - e.x) + abs(p.y - e.y) <= e.spot + 4:
+                tgt = p
+            else:
+                e.target_pid = None
+        if tgt is None:
+            best = None
+            for p in self.players.values():
+                if not self._on_water(p):
+                    continue
+                d = abs(p.x - e.x) + abs(p.y - e.y)
+                if d <= e.spot and (best is None or d < best[0]):
+                    best = (d, p)
+            if best:
+                e.target_pid = best[1].pid
+                tgt = best[1]
+        if tgt is None:
+            self._wander_water(e)
+            return
+        if abs(tgt.x - e.x) + abs(tgt.y - e.y) <= 1:
+            if e.cooldown == 0:
+                self._entity_attacks(e, tgt)
+                e.cooldown = 2
+        elif self.tick_count % 2 == 0:  # move at boat speed so it can be outrun
+            sx = (tgt.x > e.x) - (tgt.x < e.x)
+            sy = (tgt.y > e.y) - (tgt.y < e.y)
+            before = (e.x, e.y)
+            if sx:
+                self._water_step(e, e.x + sx, e.y)
+            if (e.x, e.y) == before and sy:
+                self._water_step(e, e.x, e.y + sy)
 
     def _best_weapon(self, p: Player) -> int:
         return max((economy.WEAPON_ATK[i] for i in p.inventory
@@ -663,7 +743,8 @@ class World:
         if not p:
             return None
         for e in list(self.entities.values()):
-            if e and e.kind == "brigand" and abs(e.x - p.x) + abs(e.y - p.y) <= 1:
+            if (e and e.kind in ("brigand", "monster")
+                    and abs(e.x - p.x) + abs(e.y - p.y) <= 1):
                 dmg = 6 + self._best_weapon(p)  # bare fists + best weapon held
                 e.hp -= dmg
                 self._combat_events.append({"x": e.x, "y": e.y, "dmg": dmg})
@@ -677,17 +758,27 @@ class World:
     def _kill_loot(self, p: Player, e: Entity) -> tuple[str, bool]:
         coin = e.data.get("loot_coin", 0)
         p.coin += coin
-        drops = economy.roll_loot(self._erng, self._erng.randint(1, 2))
+        is_monster = e.kind == "monster"
+        if is_monster:
+            drops = economy.roll_sea_loot(self._erng, self._erng.randint(1, 3))
+            relic_chance = economy.MONSTER_RELIC_CHANCE
+        else:
+            drops = economy.roll_loot(self._erng, self._erng.randint(1, 2))
+            relic_chance = economy.RELIC_DROP_CHANCE
         for it in drops:
             p.inventory[it] = p.inventory.get(it, 0) + 1
         gained_relic = False
-        if self._erng.random() < economy.RELIC_DROP_CHANCE and self.landmarks:
+        if self._erng.random() < relic_chance and self.landmarks:
             site = self._erng.choice(self.landmarks)
-            self._grant_relic(
-                p, f"Stolen relic of {site.name}",
-                f"Plundered from a grave-robber. {site.note} "
-                f"(Its rightful place is {site.name}.)",
-                f"looted:{site.name}")
+            if is_monster:
+                name = f"Sea-swallowed relic of {site.name}"
+                clue = (f"Cut from the belly of the {e.name}. {site.note} "
+                        f"(Lost long ago off {site.name}.)")
+            else:
+                name = f"Stolen relic of {site.name}"
+                clue = (f"Plundered from a grave-robber. {site.note} "
+                        f"(Its rightful place is {site.name}.)")
+            self._grant_relic(p, name, clue, f"looted:{site.name}")
             gained_relic = True
         del self.entities[e.eid]
         self.log.append(world_time=self.world_time, era=self.era, kind="kill",
@@ -714,9 +805,13 @@ class World:
                  for w in e.data.get("wares", [])]
         sell = [{"item": it, "qty": n, "price": economy.sell_price(it)}
                 for it, n in sorted(p.inventory.items()) if n > 0]
+        # Some shoreside traders also sell build plans (e.g. the boat plan).
+        plans = [{"type": t, "label": PLANS[t]["label"],
+                  "price": PLAN_PRICE.get(t, 30), "known": t in p.plans}
+                 for t in e.data.get("plans_for_sale", []) if t in PLANS]
         return {"kind": "merchant", "eid": e.eid, "name": e.name,
                 "line": e.data.get("line", ""), "wares": wares,
-                "sell": sell, "coin": p.coin}
+                "sell": sell, "plans": plans, "coin": p.coin}
 
     def interact(self, pid: str) -> dict | None:
         p = self.players.get(pid)
@@ -730,6 +825,9 @@ class World:
         if e.kind == "brigand":
             return {"kind": "brigand", "name": e.name,
                     "line": "The brigand bares steel — there will be no talk."}
+        if e.kind == "monster":
+            return {"kind": "brigand", "name": e.name,
+                    "line": "The beast rises from the deep — flee or fight!"}
         return {"kind": "wanderer", "name": e.name, "line": e.data.get("line", "")}
 
     def barter(self, pid: str, eid: str, action: str, item: str,
@@ -759,6 +857,20 @@ class World:
                 del p.inventory[item]
             p.coin += price
             text = f"Sold {qty} {item} for {price} coin."
+        elif action == "plan":
+            if item not in e.data.get("plans_for_sale", []):
+                return {"error": "This trader doesn't sell that plan."}
+            if item in p.plans:
+                return {"error": "You already know that plan."}
+            price = PLAN_PRICE.get(item, 30)
+            if p.coin < price:
+                return {"error": "Not enough coin."}
+            p.coin -= price
+            self.teach_plan(pid, item)
+            view = self._merchant_view(p, e)
+            view["text"] = f"You buy the {PLANS[item]['label']} plan for {price} coin."
+            view["learned"] = item
+            return view
         else:
             return {"error": "?"}
         view = self._merchant_view(p, e)

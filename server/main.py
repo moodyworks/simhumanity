@@ -216,6 +216,9 @@ async def ws_endpoint(ws: WebSocket) -> None:
                     await ws.send_text(json.dumps({"type": "log", "text": v["error"]}))
                 elif v:
                     await ws.send_text(json.dumps({"type": "merchant", **v}))
+                    if v.get("learned"):
+                        await ws.send_text(json.dumps(
+                            {"type": "plans", "plans": world.known_plans(pid)}))
             elif action == "gather":
                 picked = world.gather(pid)
                 if picked:  # only ground-item pickups send feedback

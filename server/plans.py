@@ -46,6 +46,11 @@ SITE_TEACHES = {
 # Plans a player-made ruin can teach when excavated (random pick).
 RUIN_TEACHABLE = ["wall", "workshop", "granary", "market_stall", "dock"]
 
+# Plans some merchants will sell, and for how much coin. Only merchants who
+# spawn by the sea stock the boat/dock plans (set in World._spawn_entities).
+PLAN_PRICE = {"boat": 25, "dock": 40, "workshop": 35, "granary": 20}
+COASTAL_PLANS = ["boat", "dock"]  # sold only by shoreside traders
+
 
 def plan_public(plan_type: str) -> dict:
     p = PLANS[plan_type]

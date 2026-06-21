@@ -17,6 +17,9 @@ BASE_PRICES: dict[str, int] = {
     "flint_knife": 6, "stone_axe": 7, "sickle": 6,
     "dagger": 10, "club": 8, "spear": 14, "bronze_sword": 22,
     "leather_jerkin": 9, "hide_shield": 11, "bronze_vest": 24,
+    # sea-monster spoils (prized trade goods).
+    "pearl": 12, "kraken_ink": 8, "monster_hide": 10,
+    "ambergris": 20, "leviathan_scale": 30,
 }
 
 # Weapons add to your attack; armour subtracts from damage taken. The player
@@ -35,9 +38,21 @@ _LOOT: list[tuple[str, int]] = [
 ]
 RELIC_DROP_CHANCE = 0.15  # a brigand sometimes carries a stolen site relic
 
+# Sea monsters drop briny treasure and, more often, relics swallowed at sea.
+_SEA_LOOT: list[tuple[str, int]] = [
+    ("dried_fish", 5), ("pearl", 5), ("kraken_ink", 5), ("monster_hide", 4),
+    ("ambergris", 2), ("leviathan_scale", 1),
+]
+MONSTER_RELIC_CHANCE = 0.30
+
 
 def roll_loot(rng, n: int = 1) -> list[str]:
     items, weights = zip(*_LOOT)
+    return rng.choices(items, weights=weights, k=max(0, n))
+
+
+def roll_sea_loot(rng, n: int = 1) -> list[str]:
+    items, weights = zip(*_SEA_LOOT)
     return rng.choices(items, weights=weights, k=max(0, n))
 
 

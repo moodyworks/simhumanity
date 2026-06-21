@@ -70,9 +70,13 @@ turn them up for the fast early-game feel, down for long multi-week arcs.
 - **Boats** (`build` by the coast): carry one to cross water and reach other
   landmasses; pathfinding is per-player.
 - **Economy, NPCs & combat** (`server/economy.py`, `server/entities.py`): coins;
-  wandering folk with dialogue; **merchants** you barter with (buy/sell, F or click);
-  and roaming **brigands** that spot you, give chase and fight (R or click to attack,
-  HP/loot/death-respawn).
+  wandering folk with dialogue; **merchants** you barter with (buy/sell, F or click)
+  — **coastal shipwrights** also sell the boat/dock plans for coin; roaming
+  **brigands** that spot you, chase and fight; and mythological **sea monsters**
+  (kraken, leviathan, giant squid…) that hunt only those out on the water — sailing
+  is dangerous, but they can't reach the shore. Kills drop random loot
+  (foraged/supplies/tools/weapons/armour, and rare relics); weapons raise attack,
+  armour blunts damage.
 - **Quiz-gated relics**: excavating a famous site opens a true/false study quiz;
   the relic is granted only when answered — walk away and the site stays buried.
 - **Minimap** (top-right) showing the whole basin, sites, players and viewport.
