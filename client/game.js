@@ -47,6 +47,8 @@ let dialogueOpen = false; // whether a panel (#legend) is currently shown
 let knownPlans = [];      // build plans the player has discovered
 let buildMenuOpen = false;
 let explored = null;      // Uint8Array[h][w] of tiles ever seen (fog of war)
+let fogCanvas = null;     // map-res fog layer (opaque where unexplored), for the minimap
+let fogCtx = null;
 const VISION = 8;         // tile radius the player currently sees
 let floaters = [];        // floating combat damage numbers {x,y,dmg,age}
 let merchantView = null;  // open barter session {eid,...}
@@ -79,6 +81,12 @@ function connect() {
       for (const it of msg.items || []) itemsMap[it.x + "," + it.y] = it.type;
       landmarks = msg.landmarks || [];
       explored = Array.from({ length: mapH }, () => new Uint8Array(mapW));
+      // Fog layer for the minimap: starts fully dark, cleared as tiles are seen.
+      fogCanvas = document.createElement("canvas");
+      fogCanvas.width = mapW; fogCanvas.height = mapH;
+      fogCtx = fogCanvas.getContext("2d");
+      fogCtx.fillStyle = "#0c0d12";
+      fogCtx.fillRect(0, 0, mapW, mapH);
       buildTerrainCanvas();
       sizeMinimap();
       document.getElementById("era").textContent = `· ${era} age`;
@@ -682,7 +690,13 @@ function draw() {
     for (let y = y0; y < y1; y++) {
       for (let x = x0; x < x1; x++) {
         const dx = x - self.x, dy = y - self.y;
-        if (dx * dx + dy * dy <= VISION * VISION) { explored[y][x] = 1; continue; }
+        if (dx * dx + dy * dy <= VISION * VISION) {
+          if (!explored[y][x]) {           // newly seen — also clear minimap fog
+            explored[y][x] = 1;
+            fogCtx.clearRect(x, y, 1, 1);
+          }
+          continue;
+        }
         ctx.fillStyle = explored[y][x] ? "rgba(8,9,14,0.55)" : "rgba(8,9,14,1)";
         ctx.fillRect(offX + x * TILE, offY + y * TILE, TILE, TILE);
       }
@@ -720,6 +734,8 @@ function renderMinimap() {
   const MW = mm.width, MH = mm.height;
   m.imageSmoothingEnabled = false;
   m.drawImage(terrainCanvas, 0, 0, MW, MH);
+  // Fog of war: black out the parts of the world you haven't explored.
+  if (fogCanvas) m.drawImage(fogCanvas, 0, 0, MW, MH);
 
   // Current viewport rectangle (reflects the camera, which may be panned).
   const tilesW = canvas.width / TILE, tilesH = canvas.height / TILE;
@@ -730,15 +746,19 @@ function renderMinimap() {
     tilesW / mapW * MW, tilesH / mapH * MH,
   );
 
-  // Ancient sites — small gold pips.
+  const seen = (x, y) => explored && explored[y] && explored[y][x];
+
+  // Ancient sites — gold pips, but only once you've discovered them.
   for (const lm of landmarks) {
+    if (!seen(lm.x, lm.y)) continue;
     m.fillStyle = "#ffd86b";
     m.fillRect(lm.x / mapW * MW - 1, lm.y / mapH * MH - 1, 2.5, 2.5);
   }
 
-  // Players.
+  // Players — yourself always; others only where you've explored.
   if (state) {
     for (const p of state.players) {
+      if (p.pid !== myPid && !seen(p.x, p.y)) continue;
       m.fillStyle = p.pid === myPid ? "#ffd35c" : "#e06b6b";
       m.fillRect(p.x / mapW * MW - 1.5, p.y / mapH * MH - 1.5, 3, 3);
     }

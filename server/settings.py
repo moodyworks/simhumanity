@@ -57,7 +57,7 @@ def load_settings() -> Settings:
         data_dir=data_dir,
         host=os.environ.get("SIMHUMANITY_HOST", "127.0.0.1"),
         port=int(os.environ.get("SIMHUMANITY_PORT", "8000")),
-        tick_hz=float(os.environ.get("SIMHUMANITY_TICK_HZ", "5")),
+        tick_hz=float(os.environ.get("SIMHUMANITY_TICK_HZ", "3")),
         minutes_per_tick=int(os.environ.get("SIMHUMANITY_MINUTES_PER_TICK", "30")),
         ticks_per_era=int(os.environ.get("SIMHUMANITY_TICKS_PER_ERA", "600")),
         ai_provider=os.environ.get("SIMHUMANITY_AI_PROVIDER", "auto"),
