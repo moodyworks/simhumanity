@@ -48,6 +48,8 @@ let knownPlans = [];      // build plans the player has discovered
 let buildMenuOpen = false;
 let explored = null;      // Uint8Array[h][w] of tiles ever seen (fog of war)
 const VISION = 8;         // tile radius the player currently sees
+let floaters = [];        // floating combat damage numbers {x,y,dmg,age}
+let merchantView = null;  // open barter session {eid,...}
 
 function resize() {
   canvas.width = window.innerWidth;
@@ -92,6 +94,9 @@ function connect() {
           else itemsMap[k] = c.type;
         }
       }
+      // Age existing damage floaters; add any new combat hits.
+      floaters = floaters.filter((f) => (f.age += 0.18) < 1);
+      for (const c of msg.combat || []) floaters.push({ x: c.x, y: c.y, dmg: c.dmg, age: 0 });
       draw();
       updateHud();
     } else if (msg.type === "log") {
@@ -111,6 +116,10 @@ function connect() {
     } else if (msg.type === "plans") {
       knownPlans = msg.plans || knownPlans;
       if (buildMenuOpen) renderBuildMenu();
+    } else if (msg.type === "merchant") {
+      showMerchant(msg);
+    } else if (msg.type === "npc") {
+      showNpc(msg);
     }
   };
 
@@ -128,6 +137,8 @@ function connect() {
       case " ": send({ action: "gather" }); e.preventDefault(); return;
       case "b": case "B": toggleBuildMenu(); e.preventDefault(); return;
       case "e": send({ action: "dig" }); return;
+      case "f": case "F": send({ action: "interact" }); return;
+      case "r": case "R": send({ action: "attack" }); return;
       case "Escape": closeDialogue(); return;
       default: return;
     }
@@ -274,6 +285,7 @@ function closeDialogue() {
     sendAction({ action: "site_abandon", x: currentSite.x, y: currentSite.y });
   }
   currentSite = null;
+  merchantView = null;
   closeBuildMenu();
   hideLegend();
 }
@@ -387,6 +399,45 @@ function renderBuildMenu() {
 function buildPlan(type) {
   sendAction({ action: "build", type: type });
   closeBuildMenu();
+}
+
+// ---- NPC dialogue + merchant barter ---------------------------------------
+function showNpc(msg) {
+  currentSite = null; merchantView = null;
+  const el = document.getElementById("legend");
+  el.innerHTML =
+    `<div class="legend-title">${esc(msg.name)}</div>` +
+    `<div class="legend-body">“${esc(msg.line)}”</div>` +
+    `<div class="legend-close" onclick="closeDialogue()">✕ leave</div>`;
+  el.style.opacity = "1"; el.style.pointerEvents = "auto"; dialogueOpen = true;
+}
+
+function showMerchant(msg) {
+  currentSite = null;
+  merchantView = msg;
+  const buy = (msg.wares || []).map((w) =>
+    `<div class="claim"><div class="claim-text">${esc(w.item)} ` +
+    `<span class="claim-basis">${w.price} coin</span></div>` +
+    `<div class="claim-controls"><button class="claim-btn" ` +
+    `onclick="barter('buy','${w.item}')">Buy</button></div></div>`).join("");
+  const sell = (msg.sell || []).map((s) =>
+    `<div class="claim"><div class="claim-text">${esc(s.item)} ×${s.qty} ` +
+    `<span class="claim-basis">${s.price} coin each</span></div>` +
+    `<div class="claim-controls"><button class="claim-btn" ` +
+    `onclick="barter('sell','${s.item}')">Sell</button></div></div>`).join("");
+  const el = document.getElementById("legend");
+  el.innerHTML =
+    `<div class="legend-title">${esc(msg.name)} &nbsp;·&nbsp; your coin: ${msg.coin}</div>` +
+    `<div class="legend-body" style="font-style:normal">“${esc(msg.line)}”</div>` +
+    `<div class="claims-head">Wares for sale</div><div class="claims">${buy || "<div class='legend-hint'>Nothing today.</div>"}</div>` +
+    `<div class="claims-head">Sell your goods</div><div class="claims">${sell || "<div class='legend-hint'>Your pack is empty.</div>"}</div>` +
+    `<div class="legend-close" onclick="closeDialogue()">✕ leave</div>`;
+  el.style.opacity = "1"; el.style.pointerEvents = "auto"; dialogueOpen = true;
+}
+
+function barter(trade, item) {
+  if (!merchantView) return;
+  sendAction({ action: "barter", eid: merchantView.eid, trade, item, qty: 1 });
 }
 
 // ---- rendering ------------------------------------------------------------
@@ -532,6 +583,49 @@ function draw() {
     ctx.fillText(lm.name, cx, py - 5);
   }
 
+  // Entities: merchants, wanderers, roaming brigands.
+  for (const en of state.entities || []) {
+    const px = offX + en.x * TILE, py = offY + en.y * TILE;
+    if (px < -TILE || py < -TILE || px > canvas.width || py > canvas.height)
+      continue;
+    const cx = px + TILE / 2, cy = py + TILE / 2;
+    if (en.kind === "merchant") {
+      ctx.fillStyle = "#e3c25a";
+      drawStar(cx, cy, 4, TILE * 0.34, TILE * 0.16, "#e3c25a", "#5a4a12");
+    } else if (en.kind === "brigand") {
+      ctx.fillStyle = en.hostile ? "#ff5a4a" : "#9a4438";
+      ctx.beginPath();
+      ctx.arc(cx, cy, TILE * 0.32, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#1a0d0a";
+      ctx.font = "bold 11px monospace";
+      ctx.textAlign = "center";
+      ctx.fillText("☠", cx, cy + 4);
+    } else { // wanderer
+      ctx.fillStyle = "#5aa6c0";
+      ctx.beginPath();
+      ctx.arc(cx, cy, TILE * 0.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // HP bar when wounded.
+    if (en.hp < en.max_hp) {
+      const w = TILE * 0.7;
+      ctx.fillStyle = "#300";
+      ctx.fillRect(cx - w / 2, py - 4, w, 3);
+      ctx.fillStyle = "#d44";
+      ctx.fillRect(cx - w / 2, py - 4, w * Math.max(0, en.hp / en.max_hp), 3);
+    }
+  }
+
+  // Floating combat damage numbers.
+  for (const f of floaters) {
+    const px = offX + f.x * TILE + TILE / 2, py = offY + f.y * TILE - f.age * 12;
+    ctx.fillStyle = `rgba(255,90,80,${Math.max(0, 1 - f.age)})`;
+    ctx.font = "bold 13px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(`-${f.dmg}`, px, py);
+  }
+
   // Click-to-move destination marker (cleared once we arrive).
   const self2 = me();
   if (moveTarget && self2) {
@@ -663,7 +757,11 @@ function updateHud() {
   document.getElementById("inv").textContent =
     parts.length ? parts.join("  ·  ") : "(empty pack)";
   const lore = self ? (self.lore || 0) : 0;
-  document.getElementById("lore").textContent = `Loremaster renown: ${lore}`;
+  const hp = self ? self.hp : 0, maxhp = self ? self.max_hp : 100;
+  const coin = self ? (self.coin || 0) : 0;
+  document.getElementById("vitals").textContent =
+    `HP ${hp}/${maxhp} · ${coin} coin · renown ${lore}`;
+  document.getElementById("lore").textContent = "";
 }
 
 // Camera top-left offset in screen pixels — shared by draw() and click math.
@@ -681,14 +779,21 @@ function gotoTile(tx, ty) {
   sendAction({ action: "goto", x: tx, y: ty });
 }
 
-// Clicking the world walks the player there (and re-follows + closes dialogue).
+// Clicking the world: an adjacent entity → interact/attack; else walk there.
 canvas.addEventListener("click", (e) => {
   if (!state) return;
   const { offX, offY } = cameraOffset();
+  const tx = Math.floor((e.clientX - offX) / TILE);
+  const ty = Math.floor((e.clientY - offY) / TILE);
+  const self = me();
+  const en = (state.entities || []).find((q) => q.x === tx && q.y === ty);
+  if (en && self && Math.abs(en.x - self.x) + Math.abs(en.y - self.y) <= 1) {
+    sendAction({ action: en.kind === "brigand" ? "attack" : "interact" });
+    return;
+  }
   closeDialogue();
   followPlayer = true;
-  gotoTile(Math.floor((e.clientX - offX) / TILE),
-           Math.floor((e.clientY - offY) / TILE));
+  gotoTile(tx, ty);
 });
 
 // Clicking the minimap PANS the view only — it never moves the player.

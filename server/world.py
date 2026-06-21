@@ -10,6 +10,8 @@ import random
 from dataclasses import dataclass, field
 from enum import Enum
 
+from . import economy
+from .entities import Entity, make_brigand, make_merchant, make_wanderer
 from .eventlog import EventLog
 from .landmarks import SITES, site_questions, to_tile
 from .mapdata import LEGEND, build_terrain
@@ -119,6 +121,8 @@ class Player:
     x: int
     y: int
     hp: int = 100
+    max_hp: int = 100
+    coin: int = 25
     lore: int = 0  # Loremaster renown — earned by judging legends correctly
     inventory: dict[str, int] = field(default_factory=dict)
     plans: set = field(default_factory=lambda: set(STARTING_PLANS))
@@ -132,6 +136,8 @@ class Player:
             "x": self.x,
             "y": self.y,
             "hp": self.hp,
+            "max_hp": self.max_hp,
+            "coin": self.coin,
             "lore": self.lore,
             "inventory": self.inventory,
         }
@@ -178,6 +184,14 @@ class World:
         self._place_landmarks()
         # In-progress site quizzes, keyed by (pid, x, y) → {qid: question}.
         self._site_sessions: dict[tuple, dict] = {}
+        # Living world: wandering folk, merchants, and roaming brigands.
+        self.entities: dict[str, Entity] = {}
+        self._eid_seq = 0
+        self._spawn_entities()
+        # Per-tick buffers drained by the server: combat hits (for floating
+        # damage) and per-player notices (e.g. death messages).
+        self._combat_events: list[dict] = []
+        self._notices: list[dict] = []
 
     @property
     def era(self) -> str:
@@ -443,6 +457,208 @@ class World:
                     p.x, p.y = nx, ny
                 else:
                     p.path = []
+
+    # ---- entities: spawning, AI, combat, trade ----------------------------
+    def _new_eid(self) -> str:
+        self._eid_seq += 1
+        return f"e{self._eid_seq}"
+
+    def _rand_land(self, rng: random.Random) -> tuple[int, int]:
+        for _ in range(300):
+            x, y = rng.randrange(self.width), rng.randrange(self.height)
+            if self.tiles[y][x].terrain in WALKABLE:
+                return x, y
+        return self._spawn_point()
+
+    def _spawn_entities(self) -> None:
+        rng = random.Random(self.seed ^ 0xBEEF)
+        self._erng = random.Random(self.seed ^ 0xC0FFEE)
+        for _ in range(14):
+            x, y = self._rand_land(rng)
+            e = make_merchant(self._new_eid(), x, y, rng)
+            e.data["wares"] = list(economy.MERCHANT_WARES)
+            self.entities[e.eid] = e
+        for _ in range(18):
+            x, y = self._rand_land(rng)
+            e = make_wanderer(self._new_eid(), x, y, rng)
+            self.entities[e.eid] = e
+        for _ in range(16):
+            x, y = self._rand_land(rng)
+            e = make_brigand(self._new_eid(), x, y, rng)
+            self.entities[e.eid] = e
+
+    def _land_step(self, e: Entity, nx: int, ny: int) -> None:
+        if (0 <= nx < self.width and 0 <= ny < self.height
+                and self.tiles[ny][nx].terrain in WALKABLE):
+            e.x, e.y = nx, ny
+
+    def _wander(self, e: Entity) -> None:
+        if self._erng.random() < 0.28:
+            dx, dy = self._erng.choice([(1, 0), (-1, 0), (0, 1), (0, -1)])
+            self._land_step(e, e.x + dx, e.y + dy)
+
+    def _nearest_player(self, x: int, y: int, maxd: int) -> Player | None:
+        best = None
+        for p in self.players.values():
+            d = abs(p.x - x) + abs(p.y - y)
+            if d <= maxd and (best is None or d < best[0]):
+                best = (d, p)
+        return best[1] if best else None
+
+    def _update_entities(self) -> None:
+        for e in list(self.entities.values()):
+            if e is None:
+                continue
+            if e.cooldown > 0:
+                e.cooldown -= 1
+            if e.kind == "brigand":
+                self._update_brigand(e)
+            else:
+                self._wander(e)
+
+    def _update_brigand(self, e: Entity) -> None:
+        tgt = None
+        if e.target_pid in self.players:
+            p = self.players[e.target_pid]
+            if abs(p.x - e.x) + abs(p.y - e.y) <= e.spot + 4:
+                tgt = p
+            else:
+                e.target_pid = None
+        if tgt is None:
+            p = self._nearest_player(e.x, e.y, e.spot)
+            if p:
+                e.target_pid = p.pid
+                tgt = p
+        if tgt is None:
+            self._wander(e)
+            return
+        if abs(tgt.x - e.x) + abs(tgt.y - e.y) <= 1:
+            if e.cooldown == 0:
+                self._entity_attacks(e, tgt)
+                e.cooldown = 2
+        else:  # chase greedily over land
+            sx = (tgt.x > e.x) - (tgt.x < e.x)
+            sy = (tgt.y > e.y) - (tgt.y < e.y)
+            before = (e.x, e.y)
+            if sx:
+                self._land_step(e, e.x + sx, e.y)
+            if (e.x, e.y) == before and sy:
+                self._land_step(e, e.x, e.y + sy)
+
+    def _entity_attacks(self, e: Entity, p: Player) -> None:
+        p.hp -= e.atk
+        self._combat_events.append({"x": p.x, "y": p.y, "dmg": e.atk})
+        self.log.append(world_time=self.world_time, era=self.era, kind="combat",
+                        actor=e.eid, x=p.x, y=p.y, data={"dmg": e.atk, "vs": p.pid})
+        if p.hp <= 0:
+            self._player_dies(p, e)
+
+    def _player_dies(self, p: Player, killer: Entity | None) -> None:
+        lost = p.coin // 2
+        p.coin -= lost
+        if killer:
+            killer.data["loot_coin"] = killer.data.get("loot_coin", 0) + lost
+            killer.target_pid = None
+        p.hp = p.max_hp
+        p.path = []
+        p.x, p.y = self._spawn_point()
+        self.log.append(world_time=self.world_time, era=self.era, kind="death",
+                        actor=p.pid, x=p.x, y=p.y, data={"lost": lost})
+        who = killer.name if killer else "the wilds"
+        self._notices.append({"pid": p.pid,
+                              "text": f"You were struck down by {who} and lost "
+                                      f"{lost} coin. You wake far from danger."})
+
+    def attack(self, pid: str) -> str | None:
+        """Strike an adjacent brigand. Killing it drops its loot to you."""
+        p = self.players.get(pid)
+        if not p:
+            return None
+        for e in list(self.entities.values()):
+            if e and e.kind == "brigand" and abs(e.x - p.x) + abs(e.y - p.y) <= 1:
+                dmg = 9
+                e.hp -= dmg
+                self._combat_events.append({"x": e.x, "y": e.y, "dmg": dmg})
+                if e.hp <= 0:
+                    loot = e.data.get("loot_coin", 0)
+                    p.coin += loot
+                    del self.entities[e.eid]
+                    self.log.append(world_time=self.world_time, era=self.era,
+                                    kind="kill", actor=pid, x=e.x, y=e.y,
+                                    data={"name": e.name, "loot": loot})
+                    return f"You slay the {e.name}! (+{loot} coin)"
+                e.target_pid = pid  # now it fights back
+                return f"You strike the {e.name} ({e.hp}/{e.max_hp})."
+        return "There is nothing to fight here."
+
+    # ---- interaction & trade ---------------------------------------------
+    def _adjacent_entity(self, p: Player, kind: str | None = None) -> Entity | None:
+        best = None
+        for e in self.entities.values():
+            if not e:
+                continue
+            if kind and e.kind != kind:
+                continue
+            d = abs(e.x - p.x) + abs(e.y - p.y)
+            if d <= 1 and (best is None or d < best[1]):
+                best = (e, d)
+        return best[0] if best else None
+
+    def _merchant_view(self, p: Player, e: Entity) -> dict:
+        wares = [{"item": w, "price": economy.buy_price(w)}
+                 for w in e.data.get("wares", [])]
+        sell = [{"item": it, "qty": n, "price": economy.sell_price(it)}
+                for it, n in sorted(p.inventory.items()) if n > 0]
+        return {"kind": "merchant", "eid": e.eid, "name": e.name,
+                "line": e.data.get("line", ""), "wares": wares,
+                "sell": sell, "coin": p.coin}
+
+    def interact(self, pid: str) -> dict | None:
+        p = self.players.get(pid)
+        if not p:
+            return None
+        e = self._adjacent_entity(p)
+        if not e:
+            return None
+        if e.kind == "merchant":
+            return self._merchant_view(p, e)
+        if e.kind == "brigand":
+            return {"kind": "brigand", "name": e.name,
+                    "line": "The brigand bares steel — there will be no talk."}
+        return {"kind": "wanderer", "name": e.name, "line": e.data.get("line", "")}
+
+    def barter(self, pid: str, eid: str, action: str, item: str,
+               qty: int = 1) -> dict | None:
+        p = self.players.get(pid)
+        if not p:
+            return None
+        e = self.entities.get(eid)
+        if not e or e.kind != "merchant" or abs(e.x - p.x) + abs(e.y - p.y) > 1:
+            return {"error": "No merchant within reach."}
+        qty = max(1, int(qty))
+        if action == "buy":
+            if item not in e.data.get("wares", []):
+                return {"error": "That isn't for sale."}
+            price = economy.buy_price(item) * qty
+            if p.coin < price:
+                return {"error": "Not enough coin."}
+            p.coin -= price
+            p.inventory[item] = p.inventory.get(item, 0) + qty
+            text = f"Bought {qty} {item} for {price} coin."
+        elif action == "sell":
+            if p.inventory.get(item, 0) < qty:
+                return {"error": f"You have no {item} to sell."}
+            price = economy.sell_price(item) * qty
+            p.inventory[item] -= qty
+            if p.inventory[item] <= 0:
+                del p.inventory[item]
+            p.coin += price
+            text = f"Sold {qty} {item} for {price} coin."
+        else:
+            return {"error": "?"}
+        view = self._merchant_view(p, e)
+        view["text"] = text
+        return view
 
     def gather(self, pid: str) -> str | None:
         p = self.players.get(pid)
@@ -721,6 +937,12 @@ class World:
         self.tick_count += 1
         self.world_time += self.minutes_per_tick
         self._advance_paths()  # click-to-move: one step per player per tick
+        self._update_entities()  # wanderers, merchants, hunting brigands
+        # Slow out-of-combat HP regen for players.
+        if self.tick_count % 10 == 0:
+            for p in self.players.values():
+                if p.hp < p.max_hp:
+                    p.hp = min(p.max_hp, p.hp + 1)
         # Season clock: advance to the next age once this era's span elapses.
         if (
             self.era_index + 1 < len(ERA_ORDER)
@@ -783,6 +1005,16 @@ class World:
         self._res_dirty.clear()
         return changes
 
+    def pop_combat_events(self) -> list[dict]:
+        ev = self._combat_events
+        self._combat_events = []
+        return ev
+
+    def pop_notices(self) -> list[dict]:
+        n = self._notices
+        self._notices = []
+        return n
+
     def snapshot(self) -> dict:
         structures, ruins = self._sparse_overlays()
         return {
@@ -796,5 +1028,7 @@ class World:
             "item_changes": self.pop_item_changes(),
             "structures": structures,
             "ruins": ruins,
+            "entities": [e.to_public() for e in self.entities.values() if e],
+            "combat": self.pop_combat_events(),
             "players": [p.to_public() for p in self.players.values()],
         }

@@ -55,10 +55,26 @@ turn them up for the fast early-game feel, down for long multi-week arcs.
   Byblos, Memphis & Giza, Carthage, Ġgantija, Akrotiri, Gadir. Shown as gold
   stars; excavating one (`dig` while standing on it) reveals its true history
   and, the first time, grants a unique relic + Loremaster renown.
-- **Click-to-move**: click the map or the minimap to travel. The server
-  pathfinds (BFS over land) and walks you there one tile per tick; a manual WASD
-  step cancels the route. (Landmasses separated by sea are only reachable the
-  long way around until boats exist — a known limitation.)
+- **Camera & navigation**: the camera follows the player, but clicking/dragging
+  the **minimap pans the view** without moving the player; clicking the **map**
+  walks there (server pathfinds, one tile/tick); arrow/WASD moves and re-centres.
+  Moving closes any open dialogue.
+- **Real mountain ranges** (`server/mountains.py`): the Alps, Pyrenees, Apennines,
+  Atlas, Dinaric Alps and Taurus are stamped as impassable rock with glacier/snow
+  cores, and famous **passes** (Great St Bernard, Brenner, Cilician Gates…) punch
+  walkable gaps. New `mountain`/`glacier`/`pass` terrain.
+- **Fog of war**: tiles stay hidden until seen; explored-but-out-of-vision dims.
+- **Discoverable build plans** (`server/plans.py`): start with a couple of plans,
+  learn more by excavating ruins and completing site quizzes; the **B** menu lists
+  what you know and can afford.
+- **Boats** (`build` by the coast): carry one to cross water and reach other
+  landmasses; pathfinding is per-player.
+- **Economy, NPCs & combat** (`server/economy.py`, `server/entities.py`): coins;
+  wandering folk with dialogue; **merchants** you barter with (buy/sell, F or click);
+  and roaming **brigands** that spot you, give chase and fight (R or click to attack,
+  HP/loot/death-respawn).
+- **Quiz-gated relics**: excavating a famous site opens a true/false study quiz;
+  the relic is granted only when answered — walk away and the site stays buried.
 - **Minimap** (top-right) showing the whole basin, sites, players and viewport.
 - **Bandwidth**: terrain + items are sent once at connect (`init`, ~177 KB, terrain
   as compact one-char-per-tile rows); the resource grid isn't sent at all (the
@@ -92,10 +108,9 @@ classification. Tweak the colour thresholds / biome noise there.
   the log, not the AI, so it's grounded.
 
 **Next:**
-1. Economy: ownable assets, crafting, NPC-driven markets; relic *provenance*
-   (an artifact tied to a famous legend is worth more).
-2. Pre-bake myths at the era transition so a culture *inherits* legends about
-   notable figures (vs. only generating them on dig).
+1. Crafting & ownable businesses: turn a workshop/market stall into passive
+   income; relic *provenance* (an artifact tied to a famous legend worth more).
+2. Pre-bake myths at the era transition so a culture *inherits* legends.
 3. Fame: track each player's notability so grand deeds become *their* legend.
-4. Separate per-era player cohorts; bronze-specific tech/resources.
-5. Anchor events (e.g. Younger Dryas).
+4. Anchor events (e.g. Younger Dryas); later eras beyond Bronze.
+5. NPC dialogue/myths via DeepSeek (the AI layer is already swappable).

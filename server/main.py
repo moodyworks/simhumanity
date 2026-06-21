@@ -33,6 +33,8 @@ myth_engine = MythEngine(make_provider())
 
 # Connected websockets, so the tick loop can broadcast to everyone.
 _clients: set[WebSocket] = set()
+# pid -> websocket, so the tick loop can route per-player notices.
+_ws_by_pid: dict[str, WebSocket] = {}
 
 
 @asynccontextmanager
@@ -84,6 +86,14 @@ async def _tick_loop() -> None:
                 dead.append(ws)
         for ws in dead:
             _clients.discard(ws)
+        # Per-player notices (e.g. death) routed to the matching client.
+        for n in world.pop_notices():
+            target = _ws_by_pid.get(n["pid"])
+            if target:
+                try:
+                    await target.send_text(json.dumps({"type": "log", "text": n["text"]}))
+                except Exception:
+                    pass
         await asyncio.sleep(interval)
 
 
@@ -166,6 +176,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
     }))
     await ws.send_text(json.dumps({"type": "plans", "plans": world.known_plans(pid)}))
     _clients.add(ws)
+    _ws_by_pid[pid] = ws
 
     try:
         while True:
@@ -176,6 +187,27 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 world.move(pid, int(msg.get("dx", 0)), int(msg.get("dy", 0)))
             elif action == "goto":
                 world.set_goal(pid, int(msg.get("x", -1)), int(msg.get("y", -1)))
+            elif action == "attack":
+                r = world.attack(pid)
+                if r:
+                    await ws.send_text(json.dumps({"type": "log", "text": r}))
+            elif action == "interact":
+                v = world.interact(pid)
+                if v is None:
+                    await ws.send_text(json.dumps({"type": "log",
+                        "text": "No one is here to speak with."}))
+                elif v["kind"] == "merchant":
+                    await ws.send_text(json.dumps({"type": "merchant", **v}))
+                else:
+                    await ws.send_text(json.dumps({"type": "npc", **v}))
+            elif action == "barter":
+                v = world.barter(pid, str(msg.get("eid", "")),
+                                 str(msg.get("trade", "")), str(msg.get("item", "")),
+                                 int(msg.get("qty", 1)))
+                if v and "error" in v:
+                    await ws.send_text(json.dumps({"type": "log", "text": v["error"]}))
+                elif v:
+                    await ws.send_text(json.dumps({"type": "merchant", **v}))
             elif action == "gather":
                 picked = world.gather(pid)
                 if picked:  # only ground-item pickups send feedback
@@ -227,6 +259,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
         pass
     finally:
         _clients.discard(ws)
+        _ws_by_pid.pop(pid, None)
         world.remove_player(pid)
 
 
