@@ -16,6 +16,7 @@ MAP_FILE = Path(__file__).resolve().parent / "med_map.txt"
 LEGEND = {
     "~": "water", "g": "grass", "f": "forest",
     "h": "hills", "m": "stone", "d": "desert",
+    "M": "mountain", "G": "glacier", "P": "pass",
 }
 
 

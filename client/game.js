@@ -5,10 +5,12 @@
 const TILE = 24; // pixels per tile
 
 // Keyed by single-char terrain code (server sends compact char rows).
-//   ~ water  g grass  f forest  h hills  m stone/mountain  d desert
+//   ~ water g grass f forest h hills m stone d desert
+//   M mountain (impassable)  G glacier/snow (impassable)  P pass (walkable)
 const COLORS = {
   "~": "#2b4a6f", g: "#4a7a3a", f: "#2f5a2a",
   h: "#7a6a4a", m: "#6b6f78", d: "#c2a766",
+  M: "#58545f", G: "#dfe7ee", P: "#9a8a5a",
 };
 
 // Resource caps per terrain code — mirrors server RESOURCE_BY_TERRAIN. Lets the

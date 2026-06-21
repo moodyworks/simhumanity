@@ -23,6 +23,9 @@ class Terrain(str, Enum):
     HILLS = "hills"
     STONE = "stone"
     DESERT = "desert"
+    MOUNTAIN = "mountain"   # impassable rock
+    GLACIER = "glacier"     # impassable snow/ice
+    PASS = "pass"           # walkable route through the mountains
 
 
 # What you can harvest from each terrain, and the starting amount.
@@ -33,13 +36,15 @@ RESOURCE_BY_TERRAIN: dict[Terrain, tuple[str, int]] = {
     Terrain.GRASS: ("forage", 10),
 }
 
+# Mountains and glaciers are impassable; passes are the way through.
 WALKABLE = {Terrain.GRASS, Terrain.FOREST, Terrain.HILLS, Terrain.STONE,
-            Terrain.DESERT}
+            Terrain.DESERT, Terrain.PASS}
 
 # Single-char terrain codes for compact wire encoding (matches mapdata.LEGEND).
 CHAR_BY_TERRAIN = {
     Terrain.WATER: "~", Terrain.GRASS: "g", Terrain.FOREST: "f",
     Terrain.HILLS: "h", Terrain.STONE: "m", Terrain.DESERT: "d",
+    Terrain.MOUNTAIN: "M", Terrain.GLACIER: "G", Terrain.PASS: "P",
 }
 
 # Scatterable ground items, grouped by where they're found. Picked up by
@@ -214,8 +219,8 @@ class World:
         for y in range(self.height):
             for x in range(self.width):
                 tile = tiles[y][x]
-                if tile.terrain == Terrain.WATER:
-                    continue
+                if tile.terrain not in WALKABLE:
+                    continue  # no items on water, mountains or glaciers
                 # Coastlines first — shells, clay, reeds by the sea.
                 if self._near_water(tiles, x, y) and rng.random() < 0.10:
                     tile.item = rng.choice(COAST_ITEMS)

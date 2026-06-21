@@ -24,16 +24,21 @@ from pathlib import Path
 
 from PIL import Image
 
+from server.landmarks import to_tile
+from server.mountains import stamp as stamp_mountains
+
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "medsmall.jpg"
 OUT_GRID = ROOT / "server" / "med_map.txt"
 OUT_PREVIEW = ROOT / "med_classified_preview.png"
 
 # Terrain legend chars (must match server/mapdata.LEGEND).
-#   ~ water  g grass  f forest  h hills  m stone/mountain  d desert
+#   ~ water  g grass  f forest  h hills  m stone  d desert
+#   M mountain (impassable)  G glacier/snow (impassable)  P pass (walkable)
 PREVIEW_COLORS = {
     "~": (43, 74, 111), "g": (74, 122, 58), "f": (47, 90, 42),
     "h": (122, 106, 74), "m": (150, 152, 160), "d": (194, 167, 102),
+    "M": (88, 84, 96), "G": (223, 231, 238), "P": (154, 138, 90),
 }
 
 SEED = 20260620
@@ -101,11 +106,18 @@ def build() -> None:
             else:
                 ch = base
             chars.append(ch)
+        rows.append(chars)
+
+    # Stamp real mountain ranges (impassable), glaciers, and historical passes.
+    stamp_mountains(rows, to_tile, W, H)
+
+    for y in range(H):
+        for x in range(W):
+            ch = rows[y][x]
             counts[ch] = counts.get(ch, 0) + 1
             ppx[x, y] = PREVIEW_COLORS[ch]
-        rows.append("".join(chars))
 
-    OUT_GRID.write_text("\n".join(rows))
+    OUT_GRID.write_text("\n".join("".join(r) for r in rows))
     preview.save(OUT_PREVIEW)
     total = W * H
     print(f"Source {SRC.name}: {W}x{H} ({total} tiles)")
