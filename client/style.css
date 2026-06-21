@@ -2,6 +2,16 @@
 html, body { height: 100%; background: #11131a; overflow: hidden;
   font-family: ui-monospace, "Cascadia Code", Menlo, monospace; color: #dfe3ea; }
 #view { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; }
+#buttons {
+  position: fixed; left: 12px; bottom: 12px; z-index: 16; display: flex; gap: 6px;
+}
+#buttons button {
+  font: 12px ui-monospace, monospace; cursor: pointer; color: #e7dcc2;
+  background: rgba(20, 22, 30, 0.9); border: 1px solid #3a4050;
+  border-radius: 6px; padding: 6px 10px;
+}
+#buttons button:hover { background: rgba(40, 44, 58, 0.95); }
+#buttons button.off { color: #d89a9a; border-color: #6a3a3a; }
 #minimap {
   position: fixed; top: 12px; right: 12px; z-index: 15;
   border: 1px solid #2a2f3d; border-radius: 6px;
@@ -31,6 +41,8 @@ html, body { height: 100%; background: #11131a; overflow: hidden;
 #legend {
   position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
   z-index: 30; width: min(520px, 86vw);
+  /* Never taller than the screen — scroll inside instead. */
+  max-height: 88vh; overflow-y: auto;
   background: linear-gradient(180deg, #1b1710, #14110b);
   border: 1px solid #6a5a32; border-radius: 12px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6); padding: 22px 26px;

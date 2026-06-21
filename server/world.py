@@ -65,6 +65,10 @@ COAST_ITEMS = ["shells", "clay", "reeds"]  # found on land next to the sea
 # boundary the prior age's works decay into diggable ruins.
 ERA_ORDER = ["stone", "bronze"]
 
+# Approximate (start, end) calendar year per era (negative = BC). The in-world
+# date counts down through these as the season advances.
+ERA_DATES = {"stone": (-10000, -3300), "bronze": (-3300, -1200)}
+
 # What players can build comes from the discoverable plans catalog.
 STRUCTURES = PLANS  # alias: salvage/label lookups share the plan cost/label data
 
@@ -126,8 +130,12 @@ class Player:
     lore: int = 0  # Loremaster renown — earned by judging legends correctly
     inventory: dict[str, int] = field(default_factory=dict)
     plans: set = field(default_factory=lambda: set(STARTING_PLANS))
-    # Click-to-move: queued tiles to walk, advanced one per tick by the sim.
+    relics: list = field(default_factory=list)  # site/dig relics with clues
+    # Movement: click-to-move path, held heading, run state, sub-tile accumulator.
     path: list[tuple[int, int]] = field(default_factory=list)
+    heading: tuple | None = None
+    running: bool = False
+    move_accum: float = 0.0
 
     def to_public(self) -> dict:
         return {
@@ -184,6 +192,8 @@ class World:
         self._place_landmarks()
         # In-progress site quizzes, keyed by (pid, x, y) → {qid: question}.
         self._site_sessions: dict[tuple, dict] = {}
+        # Index of standing structures by tile, for fast ownership/benefit checks.
+        self.structures: dict[tuple[int, int], Structure] = {}
         # Living world: wandering folk, merchants, and roaming brigands.
         self.entities: dict[str, Entity] = {}
         self._eid_seq = 0
@@ -196,6 +206,14 @@ class World:
     @property
     def era(self) -> str:
         return ERA_ORDER[self.era_index]
+
+    def era_year(self) -> int:
+        """In-world calendar year (negative = BC), interpolated through the era."""
+        start, end = ERA_DATES.get(self.era, (-10000, -3300))
+        span = max(1, self.ticks_per_era)
+        into = self.tick_count - self.era_index * span
+        progress = min(1.0, max(0.0, into / span))
+        return round(start + (end - start) * progress)
 
     # ---- world generation -------------------------------------------------
     def _generate(self) -> list[list[Tile]]:
@@ -326,8 +344,10 @@ class World:
             del self._site_sessions[(pid, x, y)]
             if lm and pid not in lm.found_by:
                 lm.found_by.add(pid)
-                relic = f"relic of {lm.name}"
-                p.inventory[relic] = p.inventory.get(relic, 0) + 1
+                self._grant_relic(
+                    p, f"Relic of {lm.name}",
+                    f"{lm.note} (Recovered at {lm.name}, {lm.era}.)", lm.name)
+                out["relic"] = True
                 bonus = right  # +1 renown per correct answer
                 p.lore += 2 + bonus
                 self.log.append(
@@ -389,13 +409,17 @@ class World:
         return False
 
     def move(self, pid: str, dx: int, dy: int) -> None:
+        """Set the held heading; actual stepping is tick-paced (see speeds)."""
         p = self.players.get(pid)
         if not p:
             return
-        p.path = []  # a manual step cancels any click-to-move route
-        nx, ny = p.x + dx, p.y + dy
-        if self._can_enter(p, nx, ny):
-            p.x, p.y = nx, ny
+        p.path = []  # a manual heading cancels any click-to-move route
+        p.heading = (dx, dy) if (dx or dy) else None
+
+    def set_running(self, pid: str, on: bool) -> None:
+        p = self.players.get(pid)
+        if p:
+            p.running = bool(on)
 
     def set_goal(self, pid: str, tx: int, ty: int) -> None:
         """Click-to-move: compute a path (per-player passability) for the loop."""
@@ -419,6 +443,7 @@ class World:
             if not best:
                 return
             tx, ty = best[1], best[2]
+        p.heading = None  # a destination overrides any held heading
         p.path = self._bfs_path(p, p.x, p.y, tx, ty)
 
     def _bfs_path(self, p: Player, sx: int, sy: int, tx: int,
@@ -448,15 +473,44 @@ class World:
         path.reverse()
         return path
 
+    def _player_speed(self, p: Player) -> float:
+        """Tiles per tick. Boats are slow on water; running doubles land speed."""
+        on_water = self.tiles[p.y][p.x].terrain == Terrain.WATER
+        if on_water:
+            return 0.5            # a boat is slower than walking
+        return 2.0 if p.running else 1.0
+
+    def _step_once(self, p: Player) -> bool:
+        """Take a single tile step along the path or heading. False if blocked."""
+        if p.path:
+            nx, ny = p.path[0]
+            if self._can_enter(p, nx, ny):
+                p.x, p.y = nx, ny
+                p.path.pop(0)
+                return True
+            p.path = []
+            return False
+        if p.heading:
+            dx, dy = p.heading
+            nx, ny = p.x + dx, p.y + dy
+            if self._can_enter(p, nx, ny):
+                p.x, p.y = nx, ny
+                return True
+            return False
+        return False
+
     def _advance_paths(self) -> None:
-        """Move every player one step along their click-to-move route."""
+        """Advance every player by their per-tick speed (walk / run / boat)."""
         for p in self.players.values():
-            if p.path:
-                nx, ny = p.path.pop(0)
-                if self._can_enter(p, nx, ny):
-                    p.x, p.y = nx, ny
-                else:
-                    p.path = []
+            if not p.path and not p.heading:
+                p.move_accum = 0.0
+                continue
+            p.move_accum += self._player_speed(p)
+            while p.move_accum >= 1.0:
+                p.move_accum -= 1.0
+                if not self._step_once(p):
+                    p.move_accum = 0.0
+                    break
 
     # ---- entities: spawning, AI, combat, trade ----------------------------
     def _new_eid(self) -> str:
@@ -545,51 +599,102 @@ class World:
             if (e.x, e.y) == before and sy:
                 self._land_step(e, e.x, e.y + sy)
 
+    def _best_weapon(self, p: Player) -> int:
+        return max((economy.WEAPON_ATK[i] for i in p.inventory
+                    if p.inventory[i] > 0 and i in economy.WEAPON_ATK), default=0)
+
+    def _best_armour(self, p: Player) -> int:
+        return max((economy.ARMOUR_DEF[i] for i in p.inventory
+                    if p.inventory[i] > 0 and i in economy.ARMOUR_DEF), default=0)
+
+    def _grant_relic(self, p: Player, name: str, clue: str, source: str) -> None:
+        p.relics.append({"id": len(p.relics), "name": name,
+                         "clue": clue, "source": source})
+
     def _entity_attacks(self, e: Entity, p: Player) -> None:
-        p.hp -= e.atk
-        self._combat_events.append({"x": p.x, "y": p.y, "dmg": e.atk})
+        dmg = max(1, e.atk - self._best_armour(p))  # armour blunts the blow
+        p.hp -= dmg
+        self._combat_events.append({"x": p.x, "y": p.y, "dmg": dmg})
         self.log.append(world_time=self.world_time, era=self.era, kind="combat",
-                        actor=e.eid, x=p.x, y=p.y, data={"dmg": e.atk, "vs": p.pid})
+                        actor=e.eid, x=p.x, y=p.y, data={"dmg": dmg, "vs": p.pid})
         if p.hp <= 0:
             self._player_dies(p, e)
 
+    def _owned(self, pid: str, stype: str) -> list[tuple[int, int]]:
+        return [xy for xy, s in self.structures.items()
+                if s.builder_pid == pid and s.type == stype]
+
+    def _near_own(self, p: Player, stype: str, r: int = 4) -> tuple[int, int] | None:
+        for (x, y) in self._owned(p.pid, stype):
+            if abs(x - p.x) + abs(y - p.y) <= r:
+                return (x, y)
+        return None
+
     def _player_dies(self, p: Player, killer: Entity | None) -> None:
-        lost = p.coin // 2
+        # A cache (strongbox) shields most of your coin from the robber.
+        frac = 4 if self._owned(p.pid, "cache") else 2
+        lost = p.coin // frac
         p.coin -= lost
         if killer:
             killer.data["loot_coin"] = killer.data.get("loot_coin", 0) + lost
             killer.target_pid = None
         p.hp = p.max_hp
         p.path = []
-        p.x, p.y = self._spawn_point()
+        p.heading = None
+        # Respawn at your own hut (a home) if you have one, else far away.
+        huts = self._owned(p.pid, "hut")
+        if huts:
+            p.x, p.y = min(huts, key=lambda h: abs(h[0] - p.x) + abs(h[1] - p.y))
+            home = " You wake at your hut."
+        else:
+            p.x, p.y = self._spawn_point()
+            home = " You wake far from danger."
         self.log.append(world_time=self.world_time, era=self.era, kind="death",
                         actor=p.pid, x=p.x, y=p.y, data={"lost": lost})
         who = killer.name if killer else "the wilds"
         self._notices.append({"pid": p.pid,
                               "text": f"You were struck down by {who} and lost "
-                                      f"{lost} coin. You wake far from danger."})
+                                      f"{lost} coin.{home}"})
 
-    def attack(self, pid: str) -> str | None:
-        """Strike an adjacent brigand. Killing it drops its loot to you."""
+    def attack(self, pid: str) -> dict | None:
+        """Strike an adjacent brigand. Killing it drops random loot. Returns
+        {"text": ..., "relic": bool} so the server can refresh the relic list."""
         p = self.players.get(pid)
         if not p:
             return None
         for e in list(self.entities.values()):
             if e and e.kind == "brigand" and abs(e.x - p.x) + abs(e.y - p.y) <= 1:
-                dmg = 9
+                dmg = 6 + self._best_weapon(p)  # bare fists + best weapon held
                 e.hp -= dmg
                 self._combat_events.append({"x": e.x, "y": e.y, "dmg": dmg})
                 if e.hp <= 0:
-                    loot = e.data.get("loot_coin", 0)
-                    p.coin += loot
-                    del self.entities[e.eid]
-                    self.log.append(world_time=self.world_time, era=self.era,
-                                    kind="kill", actor=pid, x=e.x, y=e.y,
-                                    data={"name": e.name, "loot": loot})
-                    return f"You slay the {e.name}! (+{loot} coin)"
+                    text, relic = self._kill_loot(p, e)
+                    return {"text": text, "relic": relic}
                 e.target_pid = pid  # now it fights back
-                return f"You strike the {e.name} ({e.hp}/{e.max_hp})."
-        return "There is nothing to fight here."
+                return {"text": f"You strike the {e.name} ({e.hp}/{e.max_hp})."}
+        return {"text": "There is nothing to fight here."}
+
+    def _kill_loot(self, p: Player, e: Entity) -> tuple[str, bool]:
+        coin = e.data.get("loot_coin", 0)
+        p.coin += coin
+        drops = economy.roll_loot(self._erng, self._erng.randint(1, 2))
+        for it in drops:
+            p.inventory[it] = p.inventory.get(it, 0) + 1
+        gained_relic = False
+        if self._erng.random() < economy.RELIC_DROP_CHANCE and self.landmarks:
+            site = self._erng.choice(self.landmarks)
+            self._grant_relic(
+                p, f"Stolen relic of {site.name}",
+                f"Plundered from a grave-robber. {site.note} "
+                f"(Its rightful place is {site.name}.)",
+                f"looted:{site.name}")
+            gained_relic = True
+        del self.entities[e.eid]
+        self.log.append(world_time=self.world_time, era=self.era, kind="kill",
+                        actor=p.pid, x=e.x, y=e.y,
+                        data={"name": e.name, "coin": coin, "drops": drops})
+        parts = [f"+{coin} coin"] + drops + (["a relic!"] if gained_relic else [])
+        return f"You slay the {e.name}! ({', '.join(parts)})", gained_relic
 
     # ---- interaction & trade ---------------------------------------------
     def _adjacent_entity(self, p: Player, kind: str | None = None) -> Entity | None:
@@ -694,6 +799,10 @@ class World:
             return []
         return [plan_public(t) for t in PLANS if t in p.plans]
 
+    def relics(self, pid: str) -> list[dict]:
+        p = self.players.get(pid)
+        return list(p.relics) if p else []
+
     def teach_plan(self, pid: str, plan_type: str) -> bool:
         """Grant a plan; returns True if it was newly learned."""
         p = self.players.get(pid)
@@ -733,12 +842,18 @@ class World:
             world_time_built=self.world_time,
             era_built=self.era,
         )
+        self.structures[(p.x, p.y)] = tile.structure
         self.log.append(
             world_time=self.world_time, era=self.era, kind="build",
             actor=pid, x=p.x, y=p.y,
             data={"type": structure_type, "builder": p.name},
         )
-        return f"You raise a {spec['label']}."
+        boon = {
+            "hut": " A home — you'll respawn here and heal nearby.",
+            "stone_circle": " A monument — it will earn you renown over time.",
+            "cache": " A strongbox — your coin is safer from brigands now.",
+        }.get(structure_type, "")
+        return f"You raise a {spec['label']}.{boon}"
 
     def _build_boat(self, pid: str, spec: dict) -> str:
         """A boat is carried, not placed — it lets you cross water. Build by the
@@ -778,8 +893,13 @@ class World:
             return {"text": "You dig, but find nothing but dirt.",
                     "excavation": None}
         ruin.excavated = True
-        # Artifacts seed the future cross-era artifact economy.
-        p.inventory["artifact"] = p.inventory.get("artifact", 0) + 1
+        # The dig yields a relic with a clue about who built it and when.
+        label0 = PLANS.get(ruin.original_type, {}).get("label", ruin.original_type)
+        self._grant_relic(
+            p, f"Artifact from a {label0}",
+            f"Unearthed at ({p.x},{p.y}). It was raised by {ruin.builder_name} "
+            f"in the {ruin.era_built.title()} Age — a clue to a buried life.",
+            "excavation")
         # A chance to salvage raw material from what the structure was made of.
         salvage = STRUCTURES.get(ruin.original_type, {}).get("cost", {})
         recovered = ""
@@ -814,6 +934,7 @@ class World:
         return {
             "text": text,
             "learned": learned,
+            "relic": True,
             "excavation": {
                 "x": p.x, "y": p.y,
                 "original_type": ruin.original_type,
@@ -927,6 +1048,7 @@ class World:
                     )
                     tile.structure = None
                     ruined += 1
+        self.structures.clear()  # all standing works are now ruins
         self.log.append(
             world_time=self.world_time, era=self.era, kind="era_transition",
             data={"new_era": self.era, "ruins_created": ruined},
@@ -938,11 +1060,17 @@ class World:
         self.world_time += self.minutes_per_tick
         self._advance_paths()  # click-to-move: one step per player per tick
         self._update_entities()  # wanderers, merchants, hunting brigands
-        # Slow out-of-combat HP regen for players.
+        # Slow out-of-combat HP regen — faster near your own hut (a home).
         if self.tick_count % 10 == 0:
             for p in self.players.values():
                 if p.hp < p.max_hp:
-                    p.hp = min(p.max_hp, p.hp + 1)
+                    heal = 4 if self._near_own(p, "hut") else 1
+                    p.hp = min(p.max_hp, p.hp + heal)
+        # Stone circles are monuments — they earn their builder renown over time.
+        if self.tick_count % 30 == 0:
+            for s in self.structures.values():
+                if s.type == "stone_circle" and s.builder_pid in self.players:
+                    self.players[s.builder_pid].lore += 1
         # Season clock: advance to the next age once this era's span elapses.
         if (
             self.era_index + 1 < len(ERA_ORDER)
@@ -1020,6 +1148,7 @@ class World:
         return {
             "type": "state",
             "era": self.era,
+            "year": self.era_year(),
             "world_time": self.world_time,
             "tick": self.tick_count,
             "width": self.width,

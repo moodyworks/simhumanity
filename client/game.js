@@ -52,6 +52,9 @@ let fogCtx = null;
 const VISION = 8;         // tile radius the player currently sees
 let floaters = [];        // floating combat damage numbers {x,y,dmg,age}
 let merchantView = null;  // open barter session {eid,...}
+let myRelics = [];        // this player's relics {id,name,clue,source}
+let relicPanelOpen = false;
+let fogEnabled = true;    // debug toggle for fog of war
 
 function resize() {
   canvas.width = window.innerWidth;
@@ -128,34 +131,13 @@ function connect() {
       showMerchant(msg);
     } else if (msg.type === "npc") {
       showNpc(msg);
+    } else if (msg.type === "relics") {
+      myRelics = msg.relics || [];
+      if (relicPanelOpen) renderRelics();
     }
   };
 
   ws.onclose = () => setTimeout(connect, 1000); // auto-reconnect
-
-  // ---- input: send intent, server decides ----
-  const send = (obj) => { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); };
-  window.addEventListener("keydown", (e) => {
-    let dx = 0, dy = 0;
-    switch (e.key) {
-      case "w": case "ArrowUp":    dy = -1; break;
-      case "s": case "ArrowDown":  dy = 1;  break;
-      case "a": case "ArrowLeft":  dx = -1; break;
-      case "d": case "ArrowRight": dx = 1;  break;
-      case " ": send({ action: "gather" }); e.preventDefault(); return;
-      case "b": case "B": toggleBuildMenu(); e.preventDefault(); return;
-      case "e": send({ action: "dig" }); return;
-      case "f": case "F": send({ action: "interact" }); return;
-      case "r": case "R": send({ action: "attack" }); return;
-      case "Escape": closeDialogue(); return;
-      default: return;
-    }
-    e.preventDefault();
-    // Moving cancels any open dialogue and re-attaches the camera to the player.
-    closeDialogue();
-    followPlayer = true;
-    send({ action: "move", dx, dy });
-  });
 }
 
 // Fire an action over the active socket (used by legend buttons, outside keydown).
@@ -294,6 +276,7 @@ function closeDialogue() {
   }
   currentSite = null;
   merchantView = null;
+  relicPanelOpen = false;
   closeBuildMenu();
   hideLegend();
 }
@@ -697,6 +680,7 @@ function draw() {
           }
           continue;
         }
+        if (!fogEnabled) continue;         // debug: fog off → reveal everything
         ctx.fillStyle = explored[y][x] ? "rgba(8,9,14,0.55)" : "rgba(8,9,14,1)";
         ctx.fillRect(offX + x * TILE, offY + y * TILE, TILE, TILE);
       }
@@ -735,7 +719,7 @@ function renderMinimap() {
   m.imageSmoothingEnabled = false;
   m.drawImage(terrainCanvas, 0, 0, MW, MH);
   // Fog of war: black out the parts of the world you haven't explored.
-  if (fogCanvas) m.drawImage(fogCanvas, 0, 0, MW, MH);
+  if (fogCanvas && fogEnabled) m.drawImage(fogCanvas, 0, 0, MW, MH);
 
   // Current viewport rectangle (reflects the camera, which may be panned).
   const tilesW = canvas.width / TILE, tilesH = canvas.height / TILE;
@@ -746,7 +730,7 @@ function renderMinimap() {
     tilesW / mapW * MW, tilesH / mapH * MH,
   );
 
-  const seen = (x, y) => explored && explored[y] && explored[y][x];
+  const seen = (x, y) => !fogEnabled || (explored && explored[y] && explored[y][x]);
 
   // Ancient sites — gold pips, but only once you've discovered them.
   for (const lm of landmarks) {
@@ -765,12 +749,16 @@ function renderMinimap() {
   }
 }
 
+function fmtYear(y) {
+  if (y === undefined || y === null) return "";
+  return y < 0 ? `${-y} BC` : `${y} AD`;
+}
+
 function updateHud() {
   if (!state) return;
-  const mins = state.world_time;
-  const days = Math.floor(mins / (60 * 24));
-  document.getElementById("clock").textContent =
-    `tick ${state.tick} · day ${days}`;
+  document.getElementById("era").textContent =
+    `· ${state.era} age · ${fmtYear(state.year)}`;
+  document.getElementById("clock").textContent = `tick ${state.tick}`;
   const self = me();
   const inv = self ? self.inventory : {};
   const parts = Object.entries(inv).map(([k, v]) => `${k}: ${v}`);
@@ -835,5 +823,99 @@ window.addEventListener("mousemove", (e) => {
     clientY: e.clientY, currentTarget: minimapEl });
 });
 window.addEventListener("mouseup", () => { panning = false; });
+
+// ---- keyboard: heading-based movement, run (Shift), and actions ------------
+const DIRS = {
+  w: [0, -1], ArrowUp: [0, -1], s: [0, 1], ArrowDown: [0, 1],
+  a: [-1, 0], ArrowLeft: [-1, 0], d: [1, 0], ArrowRight: [1, 0],
+};
+let heldDirs = [];            // stack of held direction keys; last wins
+let sentHeading = [0, 0];
+
+function pushHeading() {
+  const dir = heldDirs.length ? DIRS[heldDirs[heldDirs.length - 1]] : [0, 0];
+  if (dir[0] !== sentHeading[0] || dir[1] !== sentHeading[1]) {
+    sentHeading = dir;
+    sendAction({ action: "move", dx: dir[0], dy: dir[1] });
+  }
+}
+
+window.addEventListener("keydown", (e) => {
+  if (e.target && /^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
+  const k = e.key;
+  if (k in DIRS) {
+    e.preventDefault();
+    if (!e.repeat) {
+      if (!heldDirs.includes(k)) heldDirs.push(k);
+      closeDialogue();
+      followPlayer = true;
+      pushHeading();
+    }
+    return;
+  }
+  if (e.repeat) return;
+  switch (k) {
+    case "Shift": sendAction({ action: "run", on: true }); break;
+    case " ": sendAction({ action: "gather" }); e.preventDefault(); break;
+    case "b": case "B": toggleBuildMenu(); e.preventDefault(); break;
+    case "e": case "E": sendAction({ action: "dig" }); break;
+    case "f": case "F": sendAction({ action: "interact" }); break;
+    case "r": case "R": sendAction({ action: "attack" }); break;
+    case "i": case "I": toggleRelics(); break;
+    case "o": case "O": toggleFog(); break;
+    case "Escape": closeDialogue(); break;
+  }
+});
+
+window.addEventListener("keyup", (e) => {
+  const k = e.key;
+  if (k in DIRS) {
+    heldDirs = heldDirs.filter((d) => d !== k);
+    pushHeading();
+  } else if (k === "Shift") {
+    sendAction({ action: "run", on: false });
+  }
+});
+
+function toggleFog() {
+  fogEnabled = !fogEnabled;
+  const btn = document.getElementById("fogBtn");
+  if (btn) { btn.textContent = `Fog: ${fogEnabled ? "on" : "off"} (O)`; btn.classList.toggle("off", !fogEnabled); }
+  if (state) draw();
+}
+
+// ---- relic inventory: click a relic to read its clue -----------------------
+function toggleRelics() { relicPanelOpen ? closeRelics() : openRelics(); }
+function openRelics() { closeDialogue(); relicPanelOpen = true; renderRelics(); }
+function closeRelics() {
+  relicPanelOpen = false;
+  const el = document.getElementById("legend");
+  if (!currentSite && !currentLegend && !merchantView && !buildMenuOpen) {
+    el.style.opacity = "0"; el.style.pointerEvents = "none";
+  }
+}
+let openRelicId = null;
+function renderRelics() {
+  const el = document.getElementById("legend");
+  const rows = myRelics.map((r) => {
+    const clue = openRelicId === r.id
+      ? `<div class="claim-verdict ok">${esc(r.clue)}</div>` : "";
+    return `<div class="claim"><div class="claim-text" style="cursor:pointer" ` +
+      `onclick="toggleRelicClue(${r.id})">🏺 ${esc(r.name)} ` +
+      `<span class="claim-basis">(${esc(r.source)})</span></div>${clue}</div>`;
+  }).join("");
+  el.innerHTML =
+    `<div class="legend-title">Relics &nbsp;·&nbsp; ${myRelics.length} held</div>` +
+    (myRelics.length
+      ? `<div class="claims-head">Click a relic to read its clue</div><div class="claims">${rows}</div>`
+      : `<div class="legend-body" style="font-style:normal">No relics yet. ` +
+        `Excavate ancient sites and ruins, or take them from brigands.</div>`) +
+    `<div class="legend-close" onclick="closeRelics()">✕ close</div>`;
+  el.style.opacity = "1"; el.style.pointerEvents = "auto"; dialogueOpen = true;
+}
+function toggleRelicClue(id) {
+  openRelicId = openRelicId === id ? null : id;
+  renderRelics();
+}
 
 connect();

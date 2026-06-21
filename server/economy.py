@@ -12,7 +12,33 @@ BASE_PRICES: dict[str, int] = {
     "amber": 9, "flint": 4, "obsidian": 8,
     "shells": 3, "clay": 3, "reeds": 2, "bones": 2,
     "artifact": 15, "boat": 6,
+    # supplies, tools, weapons, armour (looted from brigands).
+    "dried_fish": 3, "hide": 4, "rope": 3, "grain": 3,
+    "flint_knife": 6, "stone_axe": 7, "sickle": 6,
+    "dagger": 10, "club": 8, "spear": 14, "bronze_sword": 22,
+    "leather_jerkin": 9, "hide_shield": 11, "bronze_vest": 24,
 }
+
+# Weapons add to your attack; armour subtracts from damage taken. The player
+# automatically uses the best they carry (no equip step in v1).
+WEAPON_ATK = {"flint_knife": 1, "dagger": 3, "club": 4, "spear": 6,
+              "bronze_sword": 9}
+ARMOUR_DEF = {"hide": 1, "leather_jerkin": 2, "hide_shield": 3, "bronze_vest": 5}
+
+# Weighted loot table for brigand kills (common foraged/supplies → rare gear).
+_LOOT: list[tuple[str, int]] = [
+    ("olives", 6), ("grapes", 6), ("herbs", 5), ("mushrooms", 4),
+    ("flint", 5), ("dried_fish", 5), ("hide", 5), ("rope", 4), ("grain", 5),
+    ("flint_knife", 3), ("stone_axe", 2), ("sickle", 2),
+    ("dagger", 3), ("club", 2), ("spear", 2), ("bronze_sword", 1),
+    ("leather_jerkin", 2), ("hide_shield", 2), ("bronze_vest", 1),
+]
+RELIC_DROP_CHANCE = 0.15  # a brigand sometimes carries a stolen site relic
+
+
+def roll_loot(rng, n: int = 1) -> list[str]:
+    items, weights = zip(*_LOOT)
+    return rng.choices(items, weights=weights, k=max(0, n))
 
 
 def base_value(item: str) -> int:

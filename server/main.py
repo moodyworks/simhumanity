@@ -117,6 +117,8 @@ async def _handle_dig(ws: WebSocket, pid: str) -> None:
     await ws.send_text(json.dumps({"type": "log", "text": result["text"]}))
     if result.get("learned"):
         await ws.send_text(json.dumps({"type": "plans", "plans": world.known_plans(pid)}))
+    if result.get("relic"):
+        await ws.send_text(json.dumps({"type": "relics", "relics": world.relics(pid)}))
     exc = result["excavation"]
     if not exc:
         return
@@ -175,6 +177,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
         "landmarks": world.landmarks_public(),  # famous ancient sites (static)
     }))
     await ws.send_text(json.dumps({"type": "plans", "plans": world.known_plans(pid)}))
+    await ws.send_text(json.dumps({"type": "relics", "relics": world.relics(pid)}))
     _clients.add(ws)
     _ws_by_pid[pid] = ws
 
@@ -185,12 +188,17 @@ async def ws_endpoint(ws: WebSocket) -> None:
             action = msg.get("action")
             if action == "move":
                 world.move(pid, int(msg.get("dx", 0)), int(msg.get("dy", 0)))
+            elif action == "run":
+                world.set_running(pid, bool(msg.get("on")))
             elif action == "goto":
                 world.set_goal(pid, int(msg.get("x", -1)), int(msg.get("y", -1)))
             elif action == "attack":
                 r = world.attack(pid)
                 if r:
-                    await ws.send_text(json.dumps({"type": "log", "text": r}))
+                    await ws.send_text(json.dumps({"type": "log", "text": r["text"]}))
+                    if r.get("relic"):
+                        await ws.send_text(json.dumps(
+                            {"type": "relics", "relics": world.relics(pid)}))
             elif action == "interact":
                 v = world.interact(pid)
                 if v is None:
@@ -234,6 +242,9 @@ async def ws_endpoint(ws: WebSocket) -> None:
                     if v.get("learned"):
                         await ws.send_text(json.dumps(
                             {"type": "plans", "plans": world.known_plans(pid)}))
+                    if v.get("relic"):
+                        await ws.send_text(json.dumps(
+                            {"type": "relics", "relics": world.relics(pid)}))
             elif action == "site_abandon":
                 world.abandon_site(pid, int(msg.get("x", -1)), int(msg.get("y", -1)))
             elif action == "investigate":
