@@ -105,6 +105,8 @@ async def _handle_dig(ws: WebSocket, pid: str) -> None:
     if not result:
         return
     await ws.send_text(json.dumps({"type": "log", "text": result["text"]}))
+    if result.get("learned"):
+        await ws.send_text(json.dumps({"type": "plans", "plans": world.known_plans(pid)}))
     exc = result["excavation"]
     if not exc:
         return
@@ -162,6 +164,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
         "items": world.items_list(),          # full once; deltas follow per tick
         "landmarks": world.landmarks_public(),  # famous ancient sites (static)
     }))
+    await ws.send_text(json.dumps({"type": "plans", "plans": world.known_plans(pid)}))
     _clients.add(ws)
 
     try:
@@ -196,6 +199,9 @@ async def ws_endpoint(ws: WebSocket) -> None:
                     await ws.send_text(json.dumps({"type": "log", "text": v["error"]}))
                 elif v:
                     await ws.send_text(json.dumps({"type": "site_response", **v}))
+                    if v.get("learned"):
+                        await ws.send_text(json.dumps(
+                            {"type": "plans", "plans": world.known_plans(pid)}))
             elif action == "site_abandon":
                 world.abandon_site(pid, int(msg.get("x", -1)), int(msg.get("y", -1)))
             elif action == "investigate":

@@ -13,6 +13,7 @@ from enum import Enum
 from .eventlog import EventLog
 from .landmarks import SITES, site_questions, to_tile
 from .mapdata import LEGEND, build_terrain
+from .plans import PLANS, RUIN_TEACHABLE, SITE_TEACHES, STARTING_PLANS, plan_public
 from .quests import public_claim
 
 
@@ -62,12 +63,8 @@ COAST_ITEMS = ["shells", "clay", "reeds"]  # found on land next to the sea
 # boundary the prior age's works decay into diggable ruins.
 ERA_ORDER = ["stone", "bronze"]
 
-# What players can build, and what it costs. Same set across eras for v1.
-STRUCTURES: dict[str, dict] = {
-    "hut": {"cost": {"wood": 5}, "label": "hut"},
-    "stone_circle": {"cost": {"stone": 10}, "label": "stone circle"},
-    "cache": {"cost": {"wood": 2}, "label": "cache"},
-}
+# What players can build comes from the discoverable plans catalog.
+STRUCTURES = PLANS  # alias: salvage/label lookups share the plan cost/label data
 
 
 @dataclass
@@ -124,6 +121,7 @@ class Player:
     hp: int = 100
     lore: int = 0  # Loremaster renown — earned by judging legends correctly
     inventory: dict[str, int] = field(default_factory=dict)
+    plans: set = field(default_factory=lambda: set(STARTING_PLANS))
     # Click-to-move: queued tiles to walk, advanced one per tick by the sim.
     path: list[tuple[int, int]] = field(default_factory=list)
 
@@ -323,10 +321,14 @@ class World:
                     actor=pid, x=x, y=y,
                     data={"site": lm.name, "correct": right},
                 )
-                out["result_text"] = (
-                    f"Relic of {lm.name} recovered! "
-                    f"({right}/{len(sess)} correct, +{2 + bonus} renown)"
-                )
+                msg = (f"Relic of {lm.name} recovered! "
+                       f"({right}/{len(sess)} correct, +{2 + bonus} renown)")
+                # The site teaches its fitting build plan.
+                taught = SITE_TEACHES.get(lm.name)
+                if taught and self.teach_plan(pid, taught):
+                    out["learned"] = taught
+                    msg += f" You learn to build: {PLANS[taught]['label']}."
+                out["result_text"] = msg
         return out
 
     def abandon_site(self, pid: str, x: int, y: int) -> None:
@@ -459,13 +461,31 @@ class World:
         )
         return None
 
+    def known_plans(self, pid: str) -> list[dict]:
+        p = self.players.get(pid)
+        if not p:
+            return []
+        return [plan_public(t) for t in PLANS if t in p.plans]
+
+    def teach_plan(self, pid: str, plan_type: str) -> bool:
+        """Grant a plan; returns True if it was newly learned."""
+        p = self.players.get(pid)
+        if not p or plan_type not in PLANS or plan_type in p.plans:
+            return False
+        p.plans.add(plan_type)
+        return True
+
     def build(self, pid: str, structure_type: str) -> str | None:
         p = self.players.get(pid)
         if not p:
             return None
-        spec = STRUCTURES.get(structure_type)
+        spec = PLANS.get(structure_type)
         if not spec:
             return "You don't know how to build that."
+        if structure_type not in p.plans:
+            return f"You haven't discovered the plan for a {spec['label']} yet."
+        if structure_type == "boat":
+            return self._build_boat(pid, spec)
         tile = self.tiles[p.y][p.x]
         if tile.structure or tile.ruin:
             return "Something already stands here."
@@ -492,6 +512,27 @@ class World:
             data={"type": structure_type, "builder": p.name},
         )
         return f"You raise a {spec['label']}."
+
+    def _build_boat(self, pid: str, spec: dict) -> str:
+        """A boat is carried, not placed — it lets you cross water. Build by the
+        sea (a coast tile or a dock)."""
+        p = self.players[pid]
+        on_dock = (self.tiles[p.y][p.x].structure
+                   and self.tiles[p.y][p.x].structure.type == "dock")
+        if not on_dock and not self._near_water(self.tiles, p.x, p.y):
+            return "You must build a boat by the water (a coast or a dock)."
+        for res, need in spec["cost"].items():
+            if p.inventory.get(res, 0) < need:
+                short = need - p.inventory.get(res, 0)
+                return f"Not enough materials — need {short} more {res}."
+        for res, need in spec["cost"].items():
+            p.inventory[res] -= need
+        p.inventory["boat"] = p.inventory.get("boat", 0) + 1
+        self.log.append(
+            world_time=self.world_time, era=self.era, kind="build",
+            actor=pid, x=p.x, y=p.y, data={"type": "boat", "builder": p.name},
+        )
+        return "You build a boat — now you can put to sea."
 
     def dig(self, pid: str) -> dict | None:
         """Excavate the ruin under the player.
@@ -535,8 +576,17 @@ class World:
             f"You unearth a {label} raised by {ruin.builder_name} "
             f"in the {ruin.era_built.title()} Age.{recovered}"
         )
+        # A ruin sometimes yields lost knowledge — a new build plan.
+        learned = None
+        if random.random() < 0.3:
+            unknown = [t for t in RUIN_TEACHABLE if t not in p.plans]
+            if unknown:
+                learned = random.choice(unknown)
+                self.teach_plan(pid, learned)
+                text += f" Among the ruins you decipher how to build a {PLANS[learned]['label']}!"
         return {
             "text": text,
+            "learned": learned,
             "excavation": {
                 "x": p.x, "y": p.y,
                 "original_type": ruin.original_type,

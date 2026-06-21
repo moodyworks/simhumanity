@@ -46,6 +46,8 @@ let followPlayer = true;  // when true the camera tracks the player each frame
 let dialogueOpen = false; // whether a panel (#legend) is currently shown
 let knownPlans = [];      // build plans the player has discovered
 let buildMenuOpen = false;
+let explored = null;      // Uint8Array[h][w] of tiles ever seen (fog of war)
+const VISION = 8;         // tile radius the player currently sees
 
 function resize() {
   canvas.width = window.innerWidth;
@@ -74,6 +76,7 @@ function connect() {
       itemsMap = {};
       for (const it of msg.items || []) itemsMap[it.x + "," + it.y] = it.type;
       landmarks = msg.landmarks || [];
+      explored = Array.from({ length: mapH }, () => new Uint8Array(mapW));
       buildTerrainCanvas();
       sizeMinimap();
       document.getElementById("era").textContent = `· ${era} age`;
@@ -567,6 +570,18 @@ function draw() {
     ctx.font = "10px monospace";
     ctx.textAlign = "center";
     ctx.fillText(p.name, px + TILE / 2, py - 2);
+  }
+
+  // ---- fog of war: clear within vision, dim the explored, hide the unknown.
+  if (explored && self) {
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const dx = x - self.x, dy = y - self.y;
+        if (dx * dx + dy * dy <= VISION * VISION) { explored[y][x] = 1; continue; }
+        ctx.fillStyle = explored[y][x] ? "rgba(8,9,14,0.55)" : "rgba(8,9,14,1)";
+        ctx.fillRect(offX + x * TILE, offY + y * TILE, TILE, TILE);
+      }
+    }
   }
 
   renderMinimap();
