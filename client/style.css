@@ -1,0 +1,69 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: #11131a; overflow: hidden;
+  font-family: ui-monospace, "Cascadia Code", Menlo, monospace; color: #dfe3ea; }
+#view { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; }
+#minimap {
+  position: fixed; top: 12px; right: 12px; z-index: 15;
+  border: 1px solid #2a2f3d; border-radius: 6px;
+  background: #0c0d12; box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  image-rendering: pixelated;
+}
+#hud {
+  position: fixed; top: 12px; left: 12px; z-index: 10;
+  background: rgba(17, 19, 26, 0.78); border: 1px solid #2a2f3d;
+  border-radius: 8px; padding: 10px 14px; line-height: 1.5;
+  pointer-events: none; min-width: 200px;
+}
+#title { font-weight: 700; font-size: 15px; }
+#era { color: #8fb7ff; font-weight: 400; }
+#clock { color: #9aa3b2; font-size: 12px; }
+#inv { margin-top: 6px; font-size: 13px; color: #cde8c9; }
+#lore { margin-top: 2px; font-size: 12px; color: #c9a85a; }
+#help { margin-top: 8px; font-size: 11px; color: #6c7486; }
+#toast {
+  position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%);
+  z-index: 20; max-width: 80vw; text-align: center;
+  background: rgba(17, 19, 26, 0.9); border: 1px solid #3a4050;
+  border-radius: 8px; padding: 10px 18px; font-size: 14px; color: #f0e7c8;
+  opacity: 0; transition: opacity 0.4s ease; pointer-events: none;
+}
+#legend {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  z-index: 30; width: min(520px, 86vw);
+  background: linear-gradient(180deg, #1b1710, #14110b);
+  border: 1px solid #6a5a32; border-radius: 12px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6); padding: 22px 26px;
+  opacity: 0; transition: opacity 0.5s ease; pointer-events: none; cursor: pointer;
+}
+.legend-title {
+  font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: #c9a85a; margin-bottom: 10px;
+}
+.legend-body { font-size: 16px; line-height: 1.55; color: #efe6cf; font-style: italic; }
+.claims-head {
+  margin: 18px 0 8px; font-size: 12px; letter-spacing: 0.04em;
+  text-transform: uppercase; color: #c9a85a;
+}
+.claims { display: flex; flex-direction: column; gap: 10px; }
+.claim {
+  background: rgba(0, 0, 0, 0.25); border: 1px solid #3a3322;
+  border-radius: 8px; padding: 10px 12px;
+}
+.claim-text { font-size: 14px; color: #ded3b6; font-style: italic; }
+.claim-controls { margin-top: 8px; display: flex; gap: 8px; }
+.claim-btn {
+  font: inherit; font-size: 12px; cursor: pointer; color: #efe6cf;
+  background: #2a2618; border: 1px solid #6a5a32; border-radius: 6px;
+  padding: 5px 12px; transition: background 0.15s;
+}
+.claim-btn:hover { background: #3a3320; }
+.claim-btn.dig { border-color: #7a5a2a; color: #f0c98a; }
+.claim-verdict { margin-top: 8px; font-size: 13px; font-style: normal; }
+.claim-verdict.ok { color: #9fd89a; }
+.claim-verdict.bad { color: #d89a9a; }
+.claim-basis { color: #8a8068; font-size: 11px; }
+.legend-close {
+  margin-top: 16px; font-size: 11px; color: #9a8f70; cursor: pointer;
+  display: inline-block; pointer-events: auto;
+}
+.legend-close:hover { color: #c9a85a; }

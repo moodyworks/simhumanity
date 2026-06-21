@@ -1,0 +1,557 @@
+// simhumanity client — a thin renderer. All authority lives on the server;
+// we just draw what it sends and forward the player's intent.
+"use strict";
+
+const TILE = 24; // pixels per tile
+
+// Keyed by single-char terrain code (server sends compact char rows).
+//   ~ water  g grass  f forest  h hills  m stone/mountain  d desert
+const COLORS = {
+  "~": "#2b4a6f", g: "#4a7a3a", f: "#2f5a2a",
+  h: "#7a6a4a", m: "#6b6f78", d: "#c2a766",
+};
+
+// Resource caps per terrain code — mirrors server RESOURCE_BY_TERRAIN. Lets the
+// client derive the (full-at-start) resource grid from terrain, so the server
+// needn't ship 65k numbers at connect; only depletion deltas stream after.
+const RESOURCE_CAP = { f: 20, h: 15, m: 30, g: 10 };
+
+// Ground items, colored by category so the map reads at a glance.
+const ITEM_COLORS = {
+  olives: "#7faa4a", grapes: "#9a6fc0", herbs: "#8fd86a", mushrooms: "#d98a8a",
+  flint: "#cfd3da", obsidian: "#3a3550", amber: "#e0a13c",
+  shells: "#e7dcc2", clay: "#b07a4a", reeds: "#6aa88a",
+  bones: "#efe7d2",
+};
+
+const canvas = document.getElementById("view");
+const ctx = canvas.getContext("2d");
+
+let myPid = null;
+let terrain = null;     // string[height][width]
+let mapW = 0, mapH = 0;
+let state = null;       // latest snapshot
+let era = "";
+let gameSocket = null;  // active WebSocket, for actions fired outside keydown
+let currentLegend = null; // {builder, text, x, y, claims:[...]} being viewed
+let resourceGrid = null;  // full grid from init, kept current via per-tick deltas
+let terrainCanvas = null; // offscreen 1px/tile render of terrain, for the minimap
+let itemsMap = null;      // "x,y" -> item type, from init + per-tick deltas
+let moveTarget = null;    // {x,y} click-to-move destination, for a marker
+let landmarks = [];       // famous ancient sites: {name,x,y,era}
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resize);
+resize();
+
+// ---- networking -----------------------------------------------------------
+function connect() {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${proto}://${location.host}/ws`);
+  gameSocket = ws;
+
+  ws.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === "init") {
+      myPid = msg.pid;
+      terrain = msg.terrain;
+      mapW = msg.width;
+      mapH = msg.height;
+      era = msg.era;
+      // Derive the resource grid from terrain (every tile starts at its cap).
+      resourceGrid = terrain.map((row) =>
+        Array.from(row, (ch) => RESOURCE_CAP[ch] || 0));
+      itemsMap = {};
+      for (const it of msg.items || []) itemsMap[it.x + "," + it.y] = it.type;
+      landmarks = msg.landmarks || [];
+      buildTerrainCanvas();
+      sizeMinimap();
+      document.getElementById("era").textContent = `· ${era} age`;
+    } else if (msg.type === "state") {
+      state = msg;
+      if (resourceGrid && msg.resource_changes) {
+        for (const c of msg.resource_changes) resourceGrid[c.y][c.x] = c.amount;
+      }
+      if (itemsMap && msg.item_changes) {
+        for (const c of msg.item_changes) {
+          const k = c.x + "," + c.y;
+          if (c.type == null) delete itemsMap[k];
+          else itemsMap[k] = c.type;
+        }
+      }
+      draw();
+      updateHud();
+    } else if (msg.type === "log") {
+      toast(msg.text, 4000);
+    } else if (msg.type === "event") {
+      toast(msg.text, 7000);
+    } else if (msg.type === "myth_pending") {
+      showLegendPending();
+    } else if (msg.type === "myth") {
+      showLegend(msg);
+    } else if (msg.type === "verdict") {
+      applyVerdict(msg);
+    } else if (msg.type === "landmark") {
+      showSite(msg);
+    }
+  };
+
+  ws.onclose = () => setTimeout(connect, 1000); // auto-reconnect
+
+  // ---- input: send intent, server decides ----
+  const send = (obj) => { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); };
+  window.addEventListener("keydown", (e) => {
+    let dx = 0, dy = 0;
+    switch (e.key) {
+      case "w": case "ArrowUp":    dy = -1; break;
+      case "s": case "ArrowDown":  dy = 1;  break;
+      case "a": case "ArrowLeft":  dx = -1; break;
+      case "d": case "ArrowRight": dx = 1;  break;
+      case " ": send({ action: "gather" }); e.preventDefault(); return;
+      case "1": send({ action: "build", type: "hut" }); return;
+      case "2": send({ action: "build", type: "stone_circle" }); return;
+      case "e": send({ action: "dig" }); return;
+      default: return;
+    }
+    e.preventDefault();
+    send({ action: "move", dx, dy });
+  });
+}
+
+// Fire an action over the active socket (used by legend buttons, outside keydown).
+function sendAction(obj) {
+  if (gameSocket && gameSocket.readyState === 1) {
+    gameSocket.send(JSON.stringify(obj));
+  }
+}
+
+// ---- transient on-screen messages ----------------------------------------
+let toastTimer = null;
+function toast(text, ms) {
+  const el = document.getElementById("toast");
+  el.textContent = text;
+  el.style.opacity = "1";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.style.opacity = "0"; }, ms);
+}
+
+// The legend a ruin "remembers" — the distorted myth from the AI Historian.
+let legendTimer = null;
+function showLegendPending() {
+  const el = document.getElementById("legend");
+  el.innerHTML =
+    `<div class="legend-title">A legend stirs…</div>` +
+    `<div class="legend-body">The Historian sifts the dust of ages, ` +
+    `recalling the tale of who once stood here…</div>`;
+  el.style.opacity = "1";
+  el.style.pointerEvents = "none";
+  clearTimeout(legendTimer);
+}
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
+// Render one claim row: either interactive (judge / hoard) or a revealed verdict.
+function claimRowHTML(c) {
+  if (c.resolved) {
+    const tag = c.mode === "hoard"
+      ? (c.truth ? "TRUE" : "FALSE")
+      : (c.correct ? "you were right" : "you were wrong");
+    const cls = (c.mode === "hoard" ? c.truth : c.correct) ? "ok" : "bad";
+    return (
+      `<div class="claim resolved">` +
+      `<div class="claim-text">…${esc(c.text)}</div>` +
+      `<div class="claim-verdict ${cls}">${esc(c.result_text || "")} ` +
+      `<span class="claim-basis">— ${esc(c.basis || "")} (${tag})</span></div>` +
+      `</div>`
+    );
+  }
+  let controls;
+  if (c.mode === "hoard") {
+    controls =
+      `<button class="claim-btn dig" onclick="investigateClaim(${c.id}, null)">` +
+      `⛏ Dig for the hoard</button>`;
+  } else {
+    controls =
+      `<button class="claim-btn" onclick="investigateClaim(${c.id}, true)">It's true</button>` +
+      `<button class="claim-btn" onclick="investigateClaim(${c.id}, false)">Embellished</button>`;
+  }
+  return (
+    `<div class="claim">` +
+    `<div class="claim-text">…${esc(c.text)}</div>` +
+    `<div class="claim-controls">${controls}</div>` +
+    `</div>`
+  );
+}
+
+function renderLegend() {
+  const el = document.getElementById("legend");
+  const L = currentLegend;
+  if (!L) return;
+  const claimsHTML = (L.claims || []).map(claimRowHTML).join("");
+  el.innerHTML =
+    `<div class="legend-title">The legend of ${esc(L.builder || "the forgotten")}</div>` +
+    `<div class="legend-body">${esc(L.text)}</div>` +
+    (claimsHTML
+      ? `<div class="claims-head">Judge the tale — which parts are true?</div>` +
+        `<div class="claims">${claimsHTML}</div>`
+      : "") +
+    `<div class="legend-close" onclick="hideLegend()">✕ dismiss</div>`;
+  el.style.opacity = "1";
+  el.style.pointerEvents = "auto";
+}
+
+function showLegend(msg) {
+  currentLegend = {
+    builder: msg.builder, text: msg.text,
+    x: msg.x, y: msg.y, claims: msg.claims || [],
+  };
+  clearTimeout(legendTimer);
+  renderLegend();
+  // Auto-dismiss only if there's nothing to interact with.
+  if (!currentLegend.claims.some((c) => !c.resolved)) {
+    legendTimer = setTimeout(() => hideLegend(), 20000);
+  }
+}
+
+function investigateClaim(id, guess) {
+  if (!currentLegend) return;
+  sendAction({
+    action: "investigate",
+    x: currentLegend.x, y: currentLegend.y,
+    claim: id, guess: guess,
+  });
+}
+
+function applyVerdict(msg) {
+  if (!currentLegend || msg.x !== currentLegend.x || msg.y !== currentLegend.y) return;
+  const c = currentLegend.claims.find((cl) => cl.id === msg.id);
+  if (!c) return;
+  Object.assign(c, {
+    resolved: true, truth: msg.truth, basis: msg.basis,
+    correct: msg.correct, result_text: msg.result_text,
+  });
+  if (msg.result_text) toast(msg.result_text, 4000);
+  renderLegend();
+}
+
+function hideLegend() {
+  const el = document.getElementById("legend");
+  el.style.opacity = "0";
+  el.style.pointerEvents = "none";
+  currentLegend = null;
+}
+
+// A famous ancient site, revealed by excavating it.
+function showSite(msg) {
+  currentLegend = null;
+  const el = document.getElementById("legend");
+  el.innerHTML =
+    `<div class="legend-title">${esc(msg.name)} &nbsp;·&nbsp; ${esc(msg.era)}</div>` +
+    `<div class="legend-body" style="font-style:normal">${esc(msg.note)}</div>` +
+    (msg.first
+      ? `<div class="claims-head">You are the first to excavate this site — ` +
+        `a relic enters your pack (+2 renown).</div>`
+      : `<div class="legend-hint">Others have walked these ruins before you.</div>`) +
+    `<div class="legend-close" onclick="hideLegend()">✕ dismiss</div>`;
+  el.style.opacity = "1";
+  el.style.pointerEvents = "auto";
+  if (msg.first) toast(`Relic of ${msg.name} recovered!`, 4500);
+}
+
+// ---- rendering ------------------------------------------------------------
+function me() {
+  if (!state || !myPid) return null;
+  return state.players.find((p) => p.pid === myPid) || null;
+}
+
+function drawStar(cx, cy, points, outer, inner, fill, stroke) {
+  ctx.beginPath();
+  for (let i = 0; i < points * 2; i++) {
+    const r = i % 2 === 0 ? outer : inner;
+    const a = (Math.PI * i) / points - Math.PI / 2;
+    const fn = i === 0 ? "moveTo" : "lineTo";
+    ctx[fn](cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+  }
+  ctx.closePath();
+  ctx.fillStyle = fill;
+  ctx.fill();
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = stroke;
+  ctx.stroke();
+}
+
+function draw() {
+  if (!terrain || !state) return;
+  ctx.fillStyle = "#0c0d12";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Camera centered on the player.
+  const self = me();
+  const camX = self ? self.x : mapW / 2;
+  const camY = self ? self.y : mapH / 2;
+  const offX = canvas.width / 2 - camX * TILE - TILE / 2;
+  const offY = canvas.height / 2 - camY * TILE - TILE / 2;
+
+  // Only iterate the tiles actually on screen — the map is large (300x219).
+  const x0 = Math.max(0, Math.floor(-offX / TILE));
+  const y0 = Math.max(0, Math.floor(-offY / TILE));
+  const x1 = Math.min(mapW, Math.ceil((canvas.width - offX) / TILE));
+  const y1 = Math.min(mapH, Math.ceil((canvas.height - offY) / TILE));
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const px = offX + x * TILE;
+      const py = offY + y * TILE;
+      ctx.fillStyle = COLORS[terrain[y][x]] || "#000";
+      ctx.fillRect(px, py, TILE, TILE);
+
+      // Resource dot — fades as the tile is depleted.
+      const amt = resourceGrid ? resourceGrid[y][x] : 0;
+      if (amt > 0) {
+        ctx.fillStyle = `rgba(230, 220, 120, ${Math.min(0.85, amt / 20)})`;
+        ctx.beginPath();
+        ctx.arc(px + TILE / 2, py + TILE / 2, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  // Ground items — small bright markers you can walk onto and gather.
+  for (const k in (itemsMap || {})) {
+    const ci = k.indexOf(",");
+    const ix = +k.slice(0, ci), iy = +k.slice(ci + 1);
+    const px = offX + ix * TILE;
+    const py = offY + iy * TILE;
+    if (px < -TILE || py < -TILE || px > canvas.width || py > canvas.height)
+      continue;
+    const cx = px + TILE / 2, cy = py + TILE / 2;
+    ctx.fillStyle = ITEM_COLORS[itemsMap[k]] || "#ffffff";
+    ctx.strokeStyle = "rgba(0,0,0,0.5)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();                 // a small diamond
+    ctx.moveTo(cx, cy - 4);
+    ctx.lineTo(cx + 4, cy);
+    ctx.lineTo(cx, cy + 4);
+    ctx.lineTo(cx - 4, cy);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // Ruins (buried mounds) — drawn under players.
+  for (const r of state.ruins || []) {
+    const px = offX + r.x * TILE;
+    const py = offY + r.y * TILE;
+    if (r.excavated) {
+      // Open pit.
+      ctx.fillStyle = "#1a1407";
+      ctx.fillRect(px + 4, py + 4, TILE - 8, TILE - 8);
+    } else {
+      // Buried mound with a marker.
+      ctx.fillStyle = "#5a4a32";
+      ctx.beginPath();
+      ctx.ellipse(px + TILE / 2, py + TILE * 0.62, TILE * 0.36,
+        TILE * 0.24, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#d8c98a";
+      ctx.font = "bold 12px monospace";
+      ctx.textAlign = "center";
+      ctx.fillText("?", px + TILE / 2, py + TILE * 0.5);
+    }
+  }
+
+  // Structures (current era).
+  for (const s of state.structures || []) {
+    const px = offX + s.x * TILE;
+    const py = offY + s.y * TILE;
+    const cx = px + TILE / 2;
+    const cy = py + TILE / 2;
+    if (s.type === "stone_circle") {
+      ctx.strokeStyle = "#cfd3da";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(cx, cy, TILE * 0.34, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (s.type === "hut") {
+      ctx.fillStyle = "#8a5a2a";
+      ctx.fillRect(px + 6, py + 8, TILE - 12, TILE - 12);
+      ctx.fillStyle = "#b5793c";
+      ctx.beginPath();
+      ctx.moveTo(px + 4, py + 9);
+      ctx.lineTo(cx, py + 2);
+      ctx.lineTo(px + TILE - 4, py + 9);
+      ctx.fill();
+    } else { // cache
+      ctx.fillStyle = "#7a6a45";
+      ctx.fillRect(px + 8, py + 8, TILE - 16, TILE - 16);
+    }
+  }
+
+  // Famous ancient sites — a gold star + always-on label.
+  for (const lm of landmarks) {
+    const px = offX + lm.x * TILE;
+    const py = offY + lm.y * TILE;
+    if (px < -60 || py < -20 || px > canvas.width + 60 || py > canvas.height)
+      continue;
+    const cx = px + TILE / 2, cy = py + TILE / 2;
+    drawStar(cx, cy, 5, TILE * 0.5, TILE * 0.22, "#ffd86b", "#5a4012");
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    const w = ctx.measureText(lm.name).width + 8;
+    ctx.fillRect(cx - w / 2, py - 15, w, 13);
+    ctx.fillStyle = "#ffe9a8";
+    ctx.font = "11px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(lm.name, cx, py - 5);
+  }
+
+  // Click-to-move destination marker (cleared once we arrive).
+  const self2 = me();
+  if (moveTarget && self2) {
+    if (self2.x === moveTarget.x && self2.y === moveTarget.y) {
+      moveTarget = null;
+    } else {
+      const mx = offX + moveTarget.x * TILE + TILE / 2;
+      const my = offY + moveTarget.y * TILE + TILE / 2;
+      ctx.strokeStyle = "#ffe08a";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(mx, my, TILE * 0.4, 0, Math.PI * 2);
+      ctx.moveTo(mx - 5, my); ctx.lineTo(mx + 5, my);
+      ctx.moveTo(mx, my - 5); ctx.lineTo(mx, my + 5);
+      ctx.stroke();
+    }
+  }
+
+  // Players — drawn as a ring (not a solid disk) so whatever is on the tile
+  // (a hut you just built, a ruin you're standing on) stays visible underneath.
+  for (const p of state.players) {
+    const px = offX + p.x * TILE;
+    const py = offY + p.y * TILE;
+    const color = p.pid === myPid ? "#ffd35c" : "#e06b6b";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = color;
+    ctx.beginPath();
+    ctx.arc(px + TILE / 2, py + TILE / 2, TILE * 0.38, 0, Math.PI * 2);
+    ctx.stroke();
+    // Small solid core so the player is still easy to spot.
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(px + TILE / 2, py + TILE / 2, TILE * 0.12, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#dfe3ea";
+    ctx.font = "10px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText(p.name, px + TILE / 2, py - 2);
+  }
+
+  renderMinimap();
+}
+
+// ---- minimap --------------------------------------------------------------
+function buildTerrainCanvas() {
+  terrainCanvas = document.createElement("canvas");
+  terrainCanvas.width = mapW;
+  terrainCanvas.height = mapH;
+  const tctx = terrainCanvas.getContext("2d");
+  for (let y = 0; y < mapH; y++) {
+    for (let x = 0; x < mapW; x++) {
+      tctx.fillStyle = COLORS[terrain[y][x]] || "#000";
+      tctx.fillRect(x, y, 1, 1);
+    }
+  }
+}
+
+function sizeMinimap() {
+  const mm = document.getElementById("minimap");
+  const targetW = 260;
+  mm.width = targetW;
+  mm.height = Math.round(targetW * mapH / mapW);
+}
+
+function renderMinimap() {
+  const mm = document.getElementById("minimap");
+  if (!terrainCanvas || !mm) return;
+  const m = mm.getContext("2d");
+  const MW = mm.width, MH = mm.height;
+  m.imageSmoothingEnabled = false;
+  m.drawImage(terrainCanvas, 0, 0, MW, MH);
+
+  // Current viewport rectangle.
+  const self = me();
+  const camX = self ? self.x : mapW / 2;
+  const camY = self ? self.y : mapH / 2;
+  const tilesW = canvas.width / TILE, tilesH = canvas.height / TILE;
+  m.strokeStyle = "rgba(255,255,255,0.85)";
+  m.lineWidth = 1;
+  m.strokeRect(
+    (camX - tilesW / 2) / mapW * MW, (camY - tilesH / 2) / mapH * MH,
+    tilesW / mapW * MW, tilesH / mapH * MH,
+  );
+
+  // Ancient sites — small gold pips.
+  for (const lm of landmarks) {
+    m.fillStyle = "#ffd86b";
+    m.fillRect(lm.x / mapW * MW - 1, lm.y / mapH * MH - 1, 2.5, 2.5);
+  }
+
+  // Players.
+  if (state) {
+    for (const p of state.players) {
+      m.fillStyle = p.pid === myPid ? "#ffd35c" : "#e06b6b";
+      m.fillRect(p.x / mapW * MW - 1.5, p.y / mapH * MH - 1.5, 3, 3);
+    }
+  }
+}
+
+function updateHud() {
+  if (!state) return;
+  const mins = state.world_time;
+  const days = Math.floor(mins / (60 * 24));
+  document.getElementById("clock").textContent =
+    `tick ${state.tick} · day ${days}`;
+  const self = me();
+  const inv = self ? self.inventory : {};
+  const parts = Object.entries(inv).map(([k, v]) => `${k}: ${v}`);
+  document.getElementById("inv").textContent =
+    parts.length ? parts.join("  ·  ") : "(empty pack)";
+  const lore = self ? (self.lore || 0) : 0;
+  document.getElementById("lore").textContent = `Loremaster renown: ${lore}`;
+}
+
+// Camera top-left offset in screen pixels — shared by draw() and click math.
+function cameraOffset() {
+  const self = me();
+  const camX = self ? self.x : mapW / 2;
+  const camY = self ? self.y : mapH / 2;
+  return {
+    offX: canvas.width / 2 - camX * TILE - TILE / 2,
+    offY: canvas.height / 2 - camY * TILE - TILE / 2,
+  };
+}
+
+// ---- click-to-move (attached once; survives reconnects) -------------------
+function gotoTile(tx, ty) {
+  if (tx < 0 || ty < 0 || tx >= mapW || ty >= mapH) return;
+  moveTarget = { x: tx, y: ty };
+  sendAction({ action: "goto", x: tx, y: ty });
+}
+
+canvas.addEventListener("click", (e) => {
+  if (!state) return;
+  const { offX, offY } = cameraOffset();
+  gotoTile(Math.floor((e.clientX - offX) / TILE),
+           Math.floor((e.clientY - offY) / TILE));
+});
+
+document.getElementById("minimap").addEventListener("click", (e) => {
+  if (!mapW) return;
+  const r = e.currentTarget.getBoundingClientRect();
+  gotoTile(Math.floor((e.clientX - r.left) / r.width * mapW),
+           Math.floor((e.clientY - r.top) / r.height * mapH));
+});
+
+connect();

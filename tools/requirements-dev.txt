@@ -1,0 +1,5 @@
+# Dev-only tools (NOT needed to run the server). Install with:
+#   ./.venv/bin/pip install -r tools/requirements-dev.txt
+# Pillow is used by tools/build_map.py to bake server/med_map.txt from the
+# source image. The baked file is committed, so the server never needs Pillow.
+Pillow>=11,<12

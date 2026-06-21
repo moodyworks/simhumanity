@@ -1,0 +1,14 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.sqlite3
+*.db
+/var/
+.DS_Store
+# Regenerable build/verification artifacts (run tools/build_map.py /
+# tools/preview_landmarks.py). The baked grid server/med_map.txt IS committed;
+# these preview images are not.
+med_classified_preview.png
+med_landmarks_preview.png
+med_sites_final.png
