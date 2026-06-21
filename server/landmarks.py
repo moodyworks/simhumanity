@@ -66,3 +66,36 @@ def to_tile(lon: float, lat: float, width: int, height: int) -> tuple[int, int]:
     x = (lon - LON_W) / (LON_E - LON_W) * (width - 1)
     y = (LAT_N - lat) / (LAT_N - LAT_S) * (height - 1)
     return round(x), round(y)
+
+
+# False claims rotated through the third quiz question, for variety.
+_FALSE_CLAIMS = [
+    ("was raised by Norse settlers from Scandinavia.",
+     "No — it belongs to the ancient Mediterranean world."),
+    ("was a fortress built during the 1800s.",
+     "No — it is thousands of years old."),
+    ("lies deep in the Americas, far across the ocean.",
+     "No — it stands in the Mediterranean."),
+    ("was first constructed of steel and concrete.",
+     "No — its builders had no such materials."),
+]
+
+
+def site_questions(site: dict, seed: int) -> list[dict]:
+    """A short true/false quiz about a site — answer it to claim the relic.
+
+    Returns dicts {id, text, truth, basis}; the server hides `truth`/`basis`
+    from the client until each is answered.
+    """
+    name = site["name"]
+    era = site["era"]
+    fc = _FALSE_CLAIMS[seed % len(_FALSE_CLAIMS)]
+    raw = [
+        (f"{name} dates to roughly {era}.", True,
+         f"True — it belongs to {era}."),
+        (f"{name} was founded by the Roman Empire.", False,
+         "False — it predates Roman power (Rome's empire began ~27 BC)."),
+        (f"{name} {fc[0]}", False, fc[1]),
+    ]
+    return [{"id": i, "text": t, "truth": tr, "basis": b}
+            for i, (t, tr, b) in enumerate(raw)]

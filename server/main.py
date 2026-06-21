@@ -94,8 +94,8 @@ async def _handle_dig(ws: WebSocket, pid: str) -> None:
     async layer. We await it inline — a dig is a deliberate pause, and the
     legend for any given ruin is generated once then cached for everyone.
     """
-    # Standing on a famous ancient site? Excavating it reveals its true history
-    # (and rewards a relic the first time) — distinct from player-made ruins.
+    # Standing on a famous ancient site? Excavating opens its study quiz; the
+    # relic is granted only once it's answered (handled in _handle_site_answer).
     site = world.excavate_landmark(pid)
     if site is not None:
         await ws.send_text(json.dumps({"type": "landmark", **site}))
@@ -187,6 +187,17 @@ async def ws_endpoint(ws: WebSocket) -> None:
                     )
             elif action == "dig":
                 await _handle_dig(ws, pid)
+            elif action == "site_answer":
+                v = world.answer_site(
+                    pid, int(msg.get("x", -1)), int(msg.get("y", -1)),
+                    int(msg.get("q", -1)), bool(msg.get("guess")),
+                )
+                if v and "error" in v:
+                    await ws.send_text(json.dumps({"type": "log", "text": v["error"]}))
+                elif v:
+                    await ws.send_text(json.dumps({"type": "site_response", **v}))
+            elif action == "site_abandon":
+                world.abandon_site(pid, int(msg.get("x", -1)), int(msg.get("y", -1)))
             elif action == "investigate":
                 v = world.investigate(
                     pid,

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from .eventlog import EventLog
-from .landmarks import SITES, to_tile
+from .landmarks import SITES, site_questions, to_tile
 from .mapdata import LEGEND, build_terrain
 from .quests import public_claim
 
@@ -173,6 +173,8 @@ class World:
         self.landmarks: list[Landmark] = []
         self.landmark_at: dict[tuple[int, int], Landmark] = {}
         self._place_landmarks()
+        # In-progress site quizzes, keyed by (pid, x, y) → {qid: question}.
+        self._site_sessions: dict[tuple, dict] = {}
 
     @property
     def era(self) -> str:
@@ -264,25 +266,67 @@ class World:
         return [lm.to_public() for lm in self.landmarks]
 
     def excavate_landmark(self, pid: str) -> dict | None:
-        """If the player stands on an ancient site, reveal it (and reward a
-        first excavation). Returns site info, or None if not on a landmark."""
+        """Standing on an ancient site opens its study quiz. The relic is only
+        granted once the quiz is answered (see answer_site); abandoning it
+        (abandon_site / walking away) leaves the site un-excavated. Returns the
+        site + questions, or None if the player isn't on a landmark."""
         p = self.players.get(pid)
         if not p:
             return None
         lm = self.landmark_at.get((p.x, p.y))
         if not lm:
             return None
-        first = pid not in lm.found_by
-        if first:
-            lm.found_by.add(pid)
-            relic = f"relic of {lm.name}"
-            p.inventory[relic] = p.inventory.get(relic, 0) + 1
-            p.lore += 2
-            self.log.append(
-                world_time=self.world_time, era=self.era, kind="discover",
-                actor=pid, x=p.x, y=p.y, data={"site": lm.name},
-            )
-        return {"name": lm.name, "era": lm.era, "note": lm.note, "first": first}
+        base = {"name": lm.name, "era": lm.era, "note": lm.note,
+                "x": p.x, "y": p.y}
+        if pid in lm.found_by:  # already studied — just re-read the placard
+            return {**base, "done": True, "questions": []}
+        # Start (or restart) a study session with the site's quiz.
+        seed = (p.x * 31 + p.y) ^ (hash(pid) & 0xFFFF)
+        qs = site_questions({"name": lm.name, "era": lm.era}, seed)
+        self._site_sessions[(pid, p.x, p.y)] = {q["id"]: q for q in qs}
+        public_qs = [{"id": q["id"], "text": q["text"], "resolved": False}
+                     for q in qs]
+        return {**base, "done": False, "questions": public_qs}
+
+    def answer_site(self, pid: str, x: int, y: int, qid: int,
+                    guess: bool) -> dict | None:
+        p = self.players.get(pid)
+        if not p:
+            return None
+        sess = self._site_sessions.get((pid, x, y))
+        if not sess or qid not in sess:
+            return {"error": "No study of this site is underway."}
+        q = sess[qid]
+        if "answered" in q:
+            return {"error": "Already answered."}
+        q["answered"] = (guess == q["truth"])
+        out = {"id": qid, "x": x, "y": y, "correct": q["answered"],
+               "basis": q["basis"], "complete": False}
+        if all("answered" in qq for qq in sess.values()):
+            out["complete"] = True
+            lm = self.landmark_at.get((x, y))
+            right = sum(1 for qq in sess.values() if qq["answered"])
+            del self._site_sessions[(pid, x, y)]
+            if lm and pid not in lm.found_by:
+                lm.found_by.add(pid)
+                relic = f"relic of {lm.name}"
+                p.inventory[relic] = p.inventory.get(relic, 0) + 1
+                bonus = right  # +1 renown per correct answer
+                p.lore += 2 + bonus
+                self.log.append(
+                    world_time=self.world_time, era=self.era, kind="discover",
+                    actor=pid, x=x, y=y,
+                    data={"site": lm.name, "correct": right},
+                )
+                out["result_text"] = (
+                    f"Relic of {lm.name} recovered! "
+                    f"({right}/{len(sess)} correct, +{2 + bonus} renown)"
+                )
+        return out
+
+    def abandon_site(self, pid: str, x: int, y: int) -> None:
+        """Player walked away mid-quiz — drop the session; site stays un-found."""
+        self._site_sessions.pop((pid, x, y), None)
 
     def _spawn_point(self) -> tuple[int, int]:
         for _ in range(500):

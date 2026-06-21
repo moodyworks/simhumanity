@@ -39,6 +39,11 @@ let terrainCanvas = null; // offscreen 1px/tile render of terrain, for the minim
 let itemsMap = null;      // "x,y" -> item type, from init + per-tick deltas
 let moveTarget = null;    // {x,y} click-to-move destination, for a marker
 let landmarks = [];       // famous ancient sites: {name,x,y,era}
+let camera = { x: 0, y: 0 }; // view center in tile coords (may be free of player)
+let followPlayer = true;  // when true the camera tracks the player each frame
+let dialogueOpen = false; // whether a panel (#legend) is currently shown
+let knownPlans = [];      // build plans the player has discovered
+let buildMenuOpen = false;
 
 function resize() {
   canvas.width = window.innerWidth;
@@ -96,6 +101,11 @@ function connect() {
       applyVerdict(msg);
     } else if (msg.type === "landmark") {
       showSite(msg);
+    } else if (msg.type === "site_response") {
+      applySiteAnswer(msg);
+    } else if (msg.type === "plans") {
+      knownPlans = msg.plans || knownPlans;
+      if (buildMenuOpen) renderBuildMenu();
     }
   };
 
@@ -111,12 +121,15 @@ function connect() {
       case "a": case "ArrowLeft":  dx = -1; break;
       case "d": case "ArrowRight": dx = 1;  break;
       case " ": send({ action: "gather" }); e.preventDefault(); return;
-      case "1": send({ action: "build", type: "hut" }); return;
-      case "2": send({ action: "build", type: "stone_circle" }); return;
+      case "b": case "B": toggleBuildMenu(); e.preventDefault(); return;
       case "e": send({ action: "dig" }); return;
+      case "Escape": closeDialogue(); return;
       default: return;
     }
     e.preventDefault();
+    // Moving cancels any open dialogue and re-attaches the camera to the player.
+    closeDialogue();
+    followPlayer = true;
     send({ action: "move", dx, dy });
   });
 }
@@ -148,6 +161,7 @@ function showLegendPending() {
     `recalling the tale of who once stood here…</div>`;
   el.style.opacity = "1";
   el.style.pointerEvents = "none";
+  dialogueOpen = true;
   clearTimeout(legendTimer);
 }
 function esc(s) {
@@ -211,6 +225,7 @@ function showLegend(msg) {
     x: msg.x, y: msg.y, claims: msg.claims || [],
   };
   clearTimeout(legendTimer);
+  dialogueOpen = true;
   renderLegend();
   // Auto-dismiss only if there's nothing to interact with.
   if (!currentLegend.claims.some((c) => !c.resolved)) {
@@ -244,23 +259,129 @@ function hideLegend() {
   el.style.opacity = "0";
   el.style.pointerEvents = "none";
   currentLegend = null;
+  dialogueOpen = false;
 }
 
-// A famous ancient site, revealed by excavating it.
+// Close whatever panel is open. If the player abandons an unanswered site quiz,
+// tell the server so the site is left un-excavated (re-diggable later).
+function closeDialogue() {
+  if (currentSite && !currentSite.done) {
+    sendAction({ action: "site_abandon", x: currentSite.x, y: currentSite.y });
+  }
+  currentSite = null;
+  closeBuildMenu();
+  hideLegend();
+}
+
+// ---- famous ancient site: a quiz you must answer to claim the relic --------
+let currentSite = null; // {x,y,name,era,note,questions:[...],done}
 function showSite(msg) {
   currentLegend = null;
+  currentSite = {
+    x: msg.x, y: msg.y, name: msg.name, era: msg.era, note: msg.note,
+    questions: msg.questions || [], done: !!msg.done,
+  };
+  renderSite();
+}
+
+function renderSite() {
+  const s = currentSite;
+  if (!s) return;
   const el = document.getElementById("legend");
+  const qHTML = s.questions.map((q) => {
+    if (q.resolved) {
+      const cls = q.correct ? "ok" : "bad";
+      return `<div class="claim resolved"><div class="claim-text">${esc(q.text)}</div>` +
+        `<div class="claim-verdict ${cls}">${q.correct ? "Correct" : "Wrong"} — ` +
+        `<span class="claim-basis">${esc(q.basis || "")}</span></div></div>`;
+    }
+    return `<div class="claim"><div class="claim-text">${esc(q.text)}</div>` +
+      `<div class="claim-controls">` +
+      `<button class="claim-btn" onclick="answerSite(${q.id},true)">True</button>` +
+      `<button class="claim-btn" onclick="answerSite(${q.id},false)">False</button>` +
+      `</div></div>`;
+  }).join("");
+  const allDone = s.questions.every((q) => q.resolved);
   el.innerHTML =
-    `<div class="legend-title">${esc(msg.name)} &nbsp;·&nbsp; ${esc(msg.era)}</div>` +
-    `<div class="legend-body" style="font-style:normal">${esc(msg.note)}</div>` +
-    (msg.first
-      ? `<div class="claims-head">You are the first to excavate this site — ` +
-        `a relic enters your pack (+2 renown).</div>`
-      : `<div class="legend-hint">Others have walked these ruins before you.</div>`) +
-    `<div class="legend-close" onclick="hideLegend()">✕ dismiss</div>`;
+    `<div class="legend-title">${esc(s.name)} &nbsp;·&nbsp; ${esc(s.era)}</div>` +
+    `<div class="legend-body" style="font-style:normal">${esc(s.note)}</div>` +
+    (s.done
+      ? `<div class="legend-hint">You have already studied this site.</div>`
+      : `<div class="claims-head">Verify the record to claim the relic — ` +
+        `judge each account:</div><div class="claims">${qHTML}</div>` +
+        (allDone ? "" : `<div class="legend-hint">Walk away and the dig is ` +
+          `abandoned — the site keeps its secrets.</div>`)) +
+    `<div class="legend-close" onclick="closeDialogue()">✕ dismiss</div>`;
   el.style.opacity = "1";
   el.style.pointerEvents = "auto";
-  if (msg.first) toast(`Relic of ${msg.name} recovered!`, 4500);
+  dialogueOpen = true;
+}
+
+function answerSite(qid, guess) {
+  if (!currentSite) return;
+  sendAction({ action: "site_answer", x: currentSite.x, y: currentSite.y,
+    q: qid, guess: guess });
+}
+
+function applySiteAnswer(msg) {
+  if (!currentSite || msg.x !== currentSite.x || msg.y !== currentSite.y) return;
+  const q = currentSite.questions.find((qq) => qq.id === msg.id);
+  if (q) Object.assign(q, { resolved: true, correct: msg.correct, basis: msg.basis });
+  if (msg.complete) {
+    currentSite.done = true;
+    if (msg.result_text) toast(msg.result_text, 5000);
+  }
+  renderSite();
+}
+
+// ---- build menu: pick from discovered plans you can afford -----------------
+function toggleBuildMenu() {
+  buildMenuOpen ? closeBuildMenu() : openBuildMenu();
+}
+function openBuildMenu() {
+  closeDialogue();
+  buildMenuOpen = true;
+  renderBuildMenu();
+}
+function closeBuildMenu() {
+  buildMenuOpen = false;
+  const el = document.getElementById("legend");
+  if (el && !currentSite && !currentLegend) {
+    el.style.opacity = "0";
+    el.style.pointerEvents = "none";
+  }
+}
+function invCount(res) {
+  const self = me();
+  return self && self.inventory ? (self.inventory[res] || 0) : 0;
+}
+function renderBuildMenu() {
+  const el = document.getElementById("legend");
+  const rows = knownPlans.map((p) => {
+    const costStr = Object.entries(p.cost || {})
+      .map(([r, n]) => `${n} ${r}`).join(", ") || "free";
+    const afford = Object.entries(p.cost || {}).every(([r, n]) => invCount(r) >= n);
+    const btn = afford
+      ? `<button class="claim-btn" onclick="buildPlan('${p.type}')">Build</button>`
+      : `<span class="claim-basis">need more</span>`;
+    return `<div class="claim"><div class="claim-text"><b>${esc(p.label)}</b> ` +
+      `— <span class="claim-basis">${esc(p.desc || "")}</span></div>` +
+      `<div class="claim-controls"><span class="claim-basis">${esc(costStr)}</span> ${btn}</div></div>`;
+  }).join("");
+  el.innerHTML =
+    `<div class="legend-title">Build &nbsp;·&nbsp; what to raise here</div>` +
+    (knownPlans.length
+      ? `<div class="claims">${rows}</div>`
+      : `<div class="legend-body" style="font-style:normal">You know no plans ` +
+        `yet. Discover them by excavating ruins and ancient sites.</div>`) +
+    `<div class="legend-close" onclick="closeBuildMenu()">✕ close</div>`;
+  el.style.opacity = "1";
+  el.style.pointerEvents = "auto";
+  dialogueOpen = true;
+}
+function buildPlan(type) {
+  sendAction({ action: "build", type: type });
+  closeBuildMenu();
 }
 
 // ---- rendering ------------------------------------------------------------
@@ -290,12 +411,10 @@ function draw() {
   ctx.fillStyle = "#0c0d12";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Camera centered on the player.
+  // Camera follows the player unless the view was panned via the minimap.
   const self = me();
-  const camX = self ? self.x : mapW / 2;
-  const camY = self ? self.y : mapH / 2;
-  const offX = canvas.width / 2 - camX * TILE - TILE / 2;
-  const offY = canvas.height / 2 - camY * TILE - TILE / 2;
+  if (followPlayer && self) { camera.x = self.x; camera.y = self.y; }
+  const { offX, offY } = cameraOffset();
 
   // Only iterate the tiles actually on screen — the map is large (300x219).
   const x0 = Math.max(0, Math.floor(-offX / TILE));
@@ -480,15 +599,12 @@ function renderMinimap() {
   m.imageSmoothingEnabled = false;
   m.drawImage(terrainCanvas, 0, 0, MW, MH);
 
-  // Current viewport rectangle.
-  const self = me();
-  const camX = self ? self.x : mapW / 2;
-  const camY = self ? self.y : mapH / 2;
+  // Current viewport rectangle (reflects the camera, which may be panned).
   const tilesW = canvas.width / TILE, tilesH = canvas.height / TILE;
   m.strokeStyle = "rgba(255,255,255,0.85)";
   m.lineWidth = 1;
   m.strokeRect(
-    (camX - tilesW / 2) / mapW * MW, (camY - tilesH / 2) / mapH * MH,
+    (camera.x - tilesW / 2) / mapW * MW, (camera.y - tilesH / 2) / mapH * MH,
     tilesW / mapW * MW, tilesH / mapH * MH,
   );
 
@@ -524,12 +640,9 @@ function updateHud() {
 
 // Camera top-left offset in screen pixels — shared by draw() and click math.
 function cameraOffset() {
-  const self = me();
-  const camX = self ? self.x : mapW / 2;
-  const camY = self ? self.y : mapH / 2;
   return {
-    offX: canvas.width / 2 - camX * TILE - TILE / 2,
-    offY: canvas.height / 2 - camY * TILE - TILE / 2,
+    offX: canvas.width / 2 - camera.x * TILE - TILE / 2,
+    offY: canvas.height / 2 - camera.y * TILE - TILE / 2,
   };
 }
 
@@ -540,18 +653,34 @@ function gotoTile(tx, ty) {
   sendAction({ action: "goto", x: tx, y: ty });
 }
 
+// Clicking the world walks the player there (and re-follows + closes dialogue).
 canvas.addEventListener("click", (e) => {
   if (!state) return;
   const { offX, offY } = cameraOffset();
+  closeDialogue();
+  followPlayer = true;
   gotoTile(Math.floor((e.clientX - offX) / TILE),
            Math.floor((e.clientY - offY) / TILE));
 });
 
-document.getElementById("minimap").addEventListener("click", (e) => {
+// Clicking the minimap PANS the view only — it never moves the player.
+function panFromMinimap(e) {
   if (!mapW) return;
   const r = e.currentTarget.getBoundingClientRect();
-  gotoTile(Math.floor((e.clientX - r.left) / r.width * mapW),
-           Math.floor((e.clientY - r.top) / r.height * mapH));
+  camera.x = Math.max(0, Math.min(mapW - 1, (e.clientX - r.left) / r.width * mapW));
+  camera.y = Math.max(0, Math.min(mapH - 1, (e.clientY - r.top) / r.height * mapH));
+  followPlayer = false; // detach from the player until they move again
+  draw();
+}
+const minimapEl = document.getElementById("minimap");
+minimapEl.addEventListener("click", panFromMinimap);
+// Drag to pan as well.
+let panning = false;
+minimapEl.addEventListener("mousedown", (e) => { panning = true; panFromMinimap(e); });
+window.addEventListener("mousemove", (e) => {
+  if (panning && e.target === minimapEl) panFromMinimap({ clientX: e.clientX,
+    clientY: e.clientY, currentTarget: minimapEl });
 });
+window.addEventListener("mouseup", () => { panning = false; });
 
 connect();
