@@ -362,31 +362,41 @@ class World:
         return (0 <= x < self.width and 0 <= y < self.height
                 and self.tiles[y][x].terrain in WALKABLE)
 
+    def _can_enter(self, p: Player, x: int, y: int) -> bool:
+        """Per-player passability: land for everyone; water if they have a boat.
+        Mountains and glaciers are impassable for all."""
+        if not (0 <= x < self.width and 0 <= y < self.height):
+            return False
+        t = self.tiles[y][x].terrain
+        if t in WALKABLE:
+            return True
+        if t == Terrain.WATER and p.inventory.get("boat", 0) > 0:
+            return True
+        return False
+
     def move(self, pid: str, dx: int, dy: int) -> None:
         p = self.players.get(pid)
         if not p:
             return
         p.path = []  # a manual step cancels any click-to-move route
         nx, ny = p.x + dx, p.y + dy
-        if not self._walkable(nx, ny):
-            return
-        p.x, p.y = nx, ny
+        if self._can_enter(p, nx, ny):
+            p.x, p.y = nx, ny
 
     def set_goal(self, pid: str, tx: int, ty: int) -> None:
-        """Click-to-move: compute a walkable path the tick loop will follow."""
+        """Click-to-move: compute a path (per-player passability) for the loop."""
         p = self.players.get(pid)
         if not p:
             return
         if not (0 <= tx < self.width and 0 <= ty < self.height):
             return
-        # If the target itself isn't walkable (sea, off a coast), aim for the
-        # nearest walkable tile to it instead.
-        if not self._walkable(tx, ty):
+        # If the target isn't enterable, aim for the nearest tile that is.
+        if not self._can_enter(p, tx, ty):
             best = None
             for radius in range(1, 8):
                 for yy in range(ty - radius, ty + radius + 1):
                     for xx in range(tx - radius, tx + radius + 1):
-                        if self._walkable(xx, yy):
+                        if self._can_enter(p, xx, yy):
                             d = (xx - tx) ** 2 + (yy - ty) ** 2
                             if best is None or d < best[0]:
                                 best = (d, xx, yy)
@@ -395,10 +405,11 @@ class World:
             if not best:
                 return
             tx, ty = best[1], best[2]
-        p.path = self._bfs_path(p.x, p.y, tx, ty)
+        p.path = self._bfs_path(p, p.x, p.y, tx, ty)
 
-    def _bfs_path(self, sx: int, sy: int, tx: int, ty: int) -> list[tuple[int, int]]:
-        """Shortest 4-dir path over walkable tiles, excluding the start tile."""
+    def _bfs_path(self, p: Player, sx: int, sy: int, tx: int,
+                  ty: int) -> list[tuple[int, int]]:
+        """Shortest 4-dir path over tiles this player can enter, sans the start."""
         if (sx, sy) == (tx, ty):
             return []
         from collections import deque
@@ -410,7 +421,7 @@ class World:
                 break
             for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 nx, ny = x + dx, y + dy
-                if (nx, ny) not in prev and self._walkable(nx, ny):
+                if (nx, ny) not in prev and self._can_enter(p, nx, ny):
                     prev[(nx, ny)] = (x, y)
                     q.append((nx, ny))
         if (tx, ty) not in prev:
@@ -428,7 +439,7 @@ class World:
         for p in self.players.values():
             if p.path:
                 nx, ny = p.path.pop(0)
-                if self._walkable(nx, ny):
+                if self._can_enter(p, nx, ny):
                     p.x, p.y = nx, ny
                 else:
                     p.path = []

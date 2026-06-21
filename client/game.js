@@ -555,6 +555,17 @@ function draw() {
   for (const p of state.players) {
     const px = offX + p.x * TILE;
     const py = offY + p.y * TILE;
+    // A player standing on water is in a boat — draw a little hull under them.
+    if (terrain[p.y] && terrain[p.y][p.x] === "~") {
+      ctx.fillStyle = "#6b4a2a";
+      ctx.beginPath();
+      ctx.moveTo(px + 3, py + TILE * 0.55);
+      ctx.lineTo(px + TILE - 3, py + TILE * 0.55);
+      ctx.lineTo(px + TILE - 7, py + TILE * 0.8);
+      ctx.lineTo(px + 7, py + TILE * 0.8);
+      ctx.closePath();
+      ctx.fill();
+    }
     const color = p.pid === myPid ? "#ffd35c" : "#e06b6b";
     ctx.lineWidth = 3;
     ctx.strokeStyle = color;
