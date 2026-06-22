@@ -479,6 +479,12 @@ function drawCity(px, py, c) {
   let s = (c.x * 92821 + c.y * 68917) >>> 0;
   const rnd = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
   const ringR = (lvl) => lvl * 7 + 4; // pixel radius per stage level
+  // A building only sits on land — keep settlements out of the sea.
+  const onLand = (bx, by) => {
+    const tx = c.x + Math.round((bx - px) / TILE);
+    const ty = c.y + Math.round((by - py) / TILE);
+    return terrain[ty] && terrain[ty][tx] && terrain[ty][tx] !== "~";
+  };
 
   // Faded ruins in the ring(s) the city has shrunk out of.
   if (mx > stage) {
@@ -487,6 +493,7 @@ function drawCity(px, py, c) {
       for (let i = 0; i < n; i++) {
         const a = rnd() * Math.PI * 2, rr = r * (0.6 + 0.4 * rnd());
         const bx = px + Math.cos(a) * rr, by = py + Math.sin(a) * rr;
+        if (!onLand(bx, by)) continue;
         ctx.fillStyle = "rgba(120,110,96,0.5)";
         ctx.fillRect(bx - 1.5, by - 1.5, 3, 3);
       }
@@ -498,6 +505,7 @@ function drawCity(px, py, c) {
     for (let i = 0; i < n; i++) {
       const a = rnd() * Math.PI * 2, rr = r * Math.sqrt(rnd());
       const bx = px + Math.cos(a) * rr, by = py + Math.sin(a) * rr;
+      if (!onLand(bx, by)) continue;
       const sz = 2 + stage * 0.4;
       ctx.fillStyle = i % 4 === 0 ? "#caa46a" : "#9c7846";
       ctx.fillRect(bx - sz / 2, by - sz / 2, sz, sz);
@@ -663,7 +671,9 @@ function draw() {
     }
   }
 
-  // Famous ancient sites — a gold star + always-on label.
+  // Famous ancient sites — a gold star marking an excavatable site. If a city
+  // of the same name sits here too, the city draws the label (avoid duplicates).
+  const cityTiles = new Set((state.cities || []).map((c) => c.x + "," + c.y));
   for (const lm of landmarks) {
     const px = offX + lm.x * TILE;
     const py = offY + lm.y * TILE;
@@ -671,6 +681,7 @@ function draw() {
       continue;
     const cx = px + TILE / 2, cy = py + TILE / 2;
     drawStar(cx, cy, 5, TILE * 0.5, TILE * 0.22, "#ffd86b", "#5a4012");
+    if (cityTiles.has(lm.x + "," + lm.y)) continue; // a city here shows the name
     ctx.fillStyle = "rgba(0,0,0,0.55)";
     const w = ctx.measureText(lm.name).width + 8;
     ctx.fillRect(cx - w / 2, py - 15, w, 13);

@@ -133,7 +133,10 @@ they inherit and argue about. The past literally becomes the future's content.
 - **Building purposes:**
   - **Hut** — your home: respawn there on death, heal faster nearby.
   - **Stone circle** — a monument: earns its builder renown over time.
-  - **Cache** — a strongbox: shields most of your coin from brigands on death.
+  - **Cache** — a strongbox: on death you lose only 25% (vs 50%), and that coin
+    is **stashed in the cache**; when the cache later decays into a ruin and
+    someone excavates it, they recover the buried hoard (an archaeology-economy
+    loop — your death becomes a future player's find).
   - **Boat** — carried; lets you cross water.
   - Others: wall, workshop, market stall, granary, dock.
 
@@ -272,6 +275,10 @@ persistence + chunked loading is in the Roadmap.)
 
 ## Changelog
 
+- **2026-06-22 (latest)** — Cache death-stash → buried treasure recovered by
+  excavators; fastest-route (time-weighted) auto-travel; fixed misplaced cities
+  (Memphis/Alexandria/Carthage/Knossos); settlements no longer spill into water;
+  colocated site+city shows one label (no duplicate "Carthage").
 - **2026-06-22 (later)** — Hunters give up the chase once you're out of sight
   (`VISION_TILES` leash); camera deadzone (no scroll until 25% from an edge, then
   follow; ease-to-centre on stop) via a rAF render loop; each game starts fresh

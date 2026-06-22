@@ -99,6 +99,7 @@ class Structure:
     builder_name: str
     world_time_built: int
     era_built: str
+    stored_coin: int = 0  # coin stashed in a cache (recovered when dug up)
 
 
 @dataclass
@@ -110,6 +111,7 @@ class Ruin:
     era_built: str
     world_time_built: int
     excavated: bool = False
+    stored_coin: int = 0  # buried treasure (e.g. a cache's death-stash)
 
 
 @dataclass
@@ -775,12 +777,20 @@ class World:
         return None
 
     def _player_dies(self, p: Player, killer: Entity | None) -> None:
-        # A cache (strongbox) shields most of your coin from the robber.
-        frac = 4 if self._owned(p.pid, "cache") else 2
-        lost = p.coin // frac
-        p.coin -= lost
+        # With a cache you lose only 25% (vs 50%) — and that coin is stashed in
+        # your nearest cache, to be unearthed by whoever digs the ruin later.
+        caches = self._owned(p.pid, "cache")
+        if caches:
+            lost = p.coin // 4
+            p.coin -= lost
+            cx, cy = min(caches, key=lambda c: abs(c[0] - p.x) + abs(c[1] - p.y))
+            self.structures[(cx, cy)].stored_coin += lost
+        else:
+            lost = p.coin // 2
+            p.coin -= lost
+            if killer:
+                killer.data["loot_coin"] = killer.data.get("loot_coin", 0) + lost
         if killer:
-            killer.data["loot_coin"] = killer.data.get("loot_coin", 0) + lost
             killer.target_pid = None
         p.hp = p.max_hp
         p.path = []
@@ -1027,7 +1037,8 @@ class World:
         boon = {
             "hut": " A home — you'll respawn here and heal nearby.",
             "stone_circle": " A monument — it will earn you renown over time.",
-            "cache": " A strongbox — your coin is safer from brigands now.",
+            "cache": " A strongbox — coin you'd lose on death is stashed here, "
+                     "for some future digger to unearth.",
         }.get(structure_type, "")
         return f"You raise a {spec['label']}.{boon}"
 
@@ -1099,6 +1110,11 @@ class World:
             res = next(iter(salvage))
             p.inventory[res] = p.inventory.get(res, 0) + 1
             recovered = f" You also salvage 1 {res}."
+        # A cache's buried death-stash pays out to whoever digs it up.
+        if ruin.stored_coin:
+            p.coin += ruin.stored_coin
+            recovered += f" You unearth a hoard of {ruin.stored_coin} coin!"
+            ruin.stored_coin = 0
         self.log.append(
             world_time=self.world_time, era=self.era, kind="excavate",
             actor=pid, x=p.x, y=p.y,
@@ -1237,6 +1253,7 @@ class World:
                         builder_name=s.builder_name,
                         era_built=s.era_built,
                         world_time_built=s.world_time_built,
+                        stored_coin=s.stored_coin,  # cache hoards become buried
                     )
                     tile.structure = None
                     ruined += 1
