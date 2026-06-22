@@ -91,7 +91,7 @@ they inherit and argue about. The past literally becomes the future's content.
 
 ---
 
-## 4. Movement
+## 4. Movement & camera
 
 - **Tick-paced**, per-player. Set a heading with WASD/arrows; **click the map**
   to pathfind (BFS) there; **click/drag the minimap** to pan the view only.
@@ -99,7 +99,11 @@ they inherit and argue about. The past literally becomes the future's content.
   water (slower than walking). Sub-tile accumulator.
 - **Boats:** carry one (built by the coast/dock or bought from a shipwright) to
   cross water; pathfinding is per-player.
-- Moving re-centres the camera on the player and closes any open dialogue.
+- **Camera deadzone:** the view does **not** scroll while you move through the
+  central region; only when you come within **25% of a screen edge** does it pan
+  to keep you inside the deadzone. When you **stop**, the camera eases to centre
+  on you. (Minimap panning detaches the camera until you move again.) Driven by a
+  `requestAnimationFrame` loop for smoothness between ticks.
 
 ---
 
@@ -159,7 +163,8 @@ they inherit and argue about. The past literally becomes the future's content.
   decline at roughly the right dates (Athens peaks ~450 BC, dwindles to a village
   by ~1600 AD, booms again modern; Carthage is razed in 146 BC; …).
 - Rendered client-side as scaled settlements with walls and **ruins in the former
-  extent** as they shrink. Shown on map + minimap, subject to fog.
+  extent** as they shrink. Shown on map + minimap, subject to fog. Cities not yet
+  founded (future cities at stage 0 with no history) stay hidden until founding.
 - *Not yet:* city ruins aren't separately diggable, and cities don't yet spawn
   their own NPCs/markets (see Roadmap → city interiors).
 
@@ -172,7 +177,8 @@ they inherit and argue about. The past literally becomes the future's content.
 - **Wandering NPCs** with dialogue.
 - **Brigands** roam land; **sea monsters** (kraken, leviathan, giant squid, …)
   roam water and hunt only players out in boats (the shore is safe). Both have
-  **random speeds** (≈60% evadable / 40% catch you).
+  **random speeds** (≈60% evadable / 40% catch you), and **give up the chase once
+  you're out of their sight** (beyond your vision radius, `VISION_TILES`).
 - **Combat:** attack adjacent hostiles (R or click). Damage = 6 + best weapon
   carried; armour blunts incoming damage. Kills drop coin + random loot
   (foraged / supplies / tools / weapons / armour / rare relics); sea monsters
@@ -253,8 +259,19 @@ homes and businesses appropriate to the era — visit a **smith**, **trade**,
 
 ---
 
+## Sessions / persistence
+
+**Each game is fresh (for now):** when a player joins an empty world, the server
+starts a brand-new World, so prior excavations/ruins/cities don't carry over. The
+event log persists to SQLite but the World does not yet load from it. (Real
+persistence + chunked loading is in the Roadmap.)
+
 ## Changelog
 
+- **2026-06-22 (later)** — Hunters give up the chase once you're out of sight
+  (`VISION_TILES` leash); camera deadzone (no scroll until 25% from an edge, then
+  follow; ease-to-centre on stop) via a rAF render loop; each game starts fresh
+  (reset world on first join); future cities hidden until founded.
 - **2026-06-22** — Timeline extended to 50k BCE–5k AD (~1-hour arc); 18 cities
   that rise and fall on real timelines (with ruins); random mob speeds
   (60% evade / 40% fight); mountain line-of-sight occlusion; bone-site dig loot;

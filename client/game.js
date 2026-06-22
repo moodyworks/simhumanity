@@ -43,13 +43,16 @@ let moveTarget = null;    // {x,y} click-to-move destination, for a marker
 let landmarks = [];       // famous ancient sites: {name,x,y,era}
 let camera = { x: 0, y: 0 }; // view center in tile coords (may be free of player)
 let followPlayer = true;  // when true the camera tracks the player each frame
+let cameraInit = false;   // snap to the player on first sight
+let lastPlayerTile = null, lastMoveAt = 0; // for the move/stop camera behaviour
 let dialogueOpen = false; // whether a panel (#legend) is currently shown
 let knownPlans = [];      // build plans the player has discovered
 let buildMenuOpen = false;
 let explored = null;      // Uint8Array[h][w] of tiles ever seen (fog of war)
 let fogCanvas = null;     // map-res fog layer (opaque where unexplored), for the minimap
 let fogCtx = null;
-let visibleSet = null;    // "x,y" tiles in current line of sight (recomputed each draw)
+let visibleSet = null;    // "x,y" tiles in current line of sight
+let lastVisKey = null;    // player tile the visibleSet was computed for
 const VISION = 8;         // tile radius the player currently sees
 
 // Mountains and glaciers block sight.
@@ -132,8 +135,7 @@ function connect() {
       // Age existing damage floaters; add any new combat hits.
       floaters = floaters.filter((f) => (f.age += 0.18) < 1);
       for (const c of msg.combat || []) floaters.push({ x: c.x, y: c.y, dmg: c.dmg, age: 0 });
-      draw();
-      updateHud();
+      updateHud();  // the render loop (rAF) draws continuously for a smooth camera
     } else if (msg.type === "log") {
       toast(msg.text, 4000);
     } else if (msg.type === "event") {
@@ -540,27 +542,31 @@ function draw() {
   ctx.fillStyle = "#0c0d12";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Camera follows the player unless the view was panned via the minimap.
   const self = me();
-  if (followPlayer && self) { camera.x = self.x; camera.y = self.y; }
   const { offX, offY } = cameraOffset();
 
-  // Compute the set of currently-visible tiles: within vision AND with clear
-  // line of sight (mountains/glaciers block the view). Reveals fog as you go.
-  visibleSet = null;
+  // Line-of-sight set (within vision AND not blocked by mountains/glaciers).
+  // Depends only on the player's tile, so recompute only when that changes —
+  // the render loop runs every frame for the camera, not the LOS.
   if (explored && self) {
-    visibleSet = new Set();
-    const x0v = Math.max(0, self.x - VISION), x1v = Math.min(mapW - 1, self.x + VISION);
-    const y0v = Math.max(0, self.y - VISION), y1v = Math.min(mapH - 1, self.y + VISION);
-    for (let yy = y0v; yy <= y1v; yy++) {
-      for (let xx = x0v; xx <= x1v; xx++) {
-        const ddx = xx - self.x, ddy = yy - self.y;
-        if (ddx * ddx + ddy * ddy > VISION * VISION) continue;
-        if (!hasLOS(self.x, self.y, xx, yy)) continue;
-        visibleSet.add(xx + "," + yy);
-        if (!explored[yy][xx]) { explored[yy][xx] = 1; fogCtx.clearRect(xx, yy, 1, 1); }
+    const visKey = self.x + "," + self.y;
+    if (visKey !== lastVisKey || !visibleSet) {
+      lastVisKey = visKey;
+      visibleSet = new Set();
+      const x0v = Math.max(0, self.x - VISION), x1v = Math.min(mapW - 1, self.x + VISION);
+      const y0v = Math.max(0, self.y - VISION), y1v = Math.min(mapH - 1, self.y + VISION);
+      for (let yy = y0v; yy <= y1v; yy++) {
+        for (let xx = x0v; xx <= x1v; xx++) {
+          const ddx = xx - self.x, ddy = yy - self.y;
+          if (ddx * ddx + ddy * ddy > VISION * VISION) continue;
+          if (!hasLOS(self.x, self.y, xx, yy)) continue;
+          visibleSet.add(xx + "," + yy);
+          if (!explored[yy][xx]) { explored[yy][xx] = 1; fogCtx.clearRect(xx, yy, 1, 1); }
+        }
       }
     }
+  } else {
+    visibleSet = null;
   }
 
   // Only iterate the tiles actually on screen — the map is large (300x219).
@@ -676,6 +682,7 @@ function draw() {
 
   // Cities: settlements that grow and crumble across the ages.
   for (const c of state.cities || []) {
+    if (c.stage === 0 && c.max === 0) continue; // not founded yet — hidden
     if (fogEnabled && !(explored && explored[c.y] && explored[c.y][c.x])) continue;
     const px = offX + c.x * TILE + TILE / 2, py = offY + c.y * TILE + TILE / 2;
     if (px < -120 || py < -80 || px > canvas.width + 120 || py > canvas.height + 40)
@@ -1075,5 +1082,39 @@ function toggleRelicClue(id) {
   openRelicId = openRelicId === id ? null : id;
   renderRelics();
 }
+
+// ---- camera: deadzone while moving, ease-to-centre when stopped ------------
+function updateCamera() {
+  const self = me();
+  if (!self) return;
+  if (!cameraInit) { camera.x = self.x; camera.y = self.y; cameraInit = true; return; }
+  if (!followPlayer) return;            // panned via minimap — hold position
+  const now = performance.now();
+  const key = self.x + "," + self.y;
+  if (key !== lastPlayerTile) { lastPlayerTile = key; lastMoveAt = now; }
+  const moving = (now - lastMoveAt) < 400;
+  const dzX = (canvas.width * 0.25) / TILE;  // tiles from centre to deadzone edge
+  const dzY = (canvas.height * 0.25) / TILE;
+  if (moving) {
+    // Don't scroll until the player nears a screen edge (within 25%); then the
+    // camera follows just enough to keep them inside the central deadzone.
+    camera.x = Math.max(self.x - dzX, Math.min(self.x + dzX, camera.x));
+    camera.y = Math.max(self.y - dzY, Math.min(self.y + dzY, camera.y));
+  } else {
+    // Stopped: glide the camera until the player is centred again.
+    camera.x += (self.x - camera.x) * 0.12;
+    camera.y += (self.y - camera.y) * 0.12;
+    if (Math.abs(self.x - camera.x) < 0.03) camera.x = self.x;
+    if (Math.abs(self.y - camera.y) < 0.03) camera.y = self.y;
+  }
+}
+
+// Continuous render loop so the camera moves smoothly between ticks.
+function renderLoop() {
+  updateCamera();
+  draw();
+  requestAnimationFrame(renderLoop);
+}
+requestAnimationFrame(renderLoop);
 
 connect();

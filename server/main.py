@@ -25,11 +25,15 @@ from .world import World
 CLIENT_DIR = Path(__file__).resolve().parent.parent / "client"
 
 log = EventLog(SETTINGS.db_path)
-world = World(
-    log,
-    minutes_per_tick=SETTINGS.minutes_per_tick,
-    ticks_per_era=SETTINGS.ticks_per_era,
-)
+def _new_world() -> World:
+    return World(
+        log,
+        minutes_per_tick=SETTINGS.minutes_per_tick,
+        ticks_per_era=SETTINGS.ticks_per_era,
+    )
+
+
+world = _new_world()
 myth_engine = MythEngine(make_provider())
 
 # Connected websockets, so the tick loop can broadcast to everyone.
@@ -158,6 +162,11 @@ async def _handle_dig(ws: WebSocket, pid: str) -> None:
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket) -> None:
     await ws.accept()
+    # Each game is fresh (for now): when someone joins an empty world, start a
+    # brand-new one so prior excavations/ruins don't carry over.
+    global world
+    if not world.players:
+        world = _new_world()
     pid = uuid.uuid4().hex[:8]
     name = f"Wanderer-{pid[:4]}"
     player = world.add_player(pid, name)

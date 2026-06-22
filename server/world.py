@@ -46,6 +46,10 @@ RESOURCE_BY_TERRAIN: dict[Terrain, tuple[str, int]] = {
 WALKABLE = {Terrain.GRASS, Terrain.FOREST, Terrain.HILLS, Terrain.STONE,
             Terrain.DESERT, Terrain.PASS}
 
+# The player's sight radius (mirrors the client VISION). A hunter gives up the
+# chase once its quarry is beyond this — i.e. out of the player's view.
+VISION_TILES = 8
+
 # Single-char terrain codes for compact wire encoding (matches mapdata.LEGEND).
 CHAR_BY_TERRAIN = {
     Terrain.WATER: "~", Terrain.GRASS: "g", Terrain.FOREST: "f",
@@ -670,10 +674,10 @@ class World:
         tgt = None
         if e.target_pid in self.players:
             p = self.players[e.target_pid]
-            if abs(p.x - e.x) + abs(p.y - e.y) <= e.spot + 4:
+            if abs(p.x - e.x) + abs(p.y - e.y) <= VISION_TILES:
                 tgt = p
             else:
-                e.target_pid = None
+                e.target_pid = None  # lost from sight — give up the chase
         if tgt is None:
             p = self._nearest_player(e.x, e.y, e.spot)
             if p:
@@ -696,10 +700,10 @@ class World:
         tgt = None
         if e.target_pid in self.players:
             p = self.players[e.target_pid]
-            if self._on_water(p) and abs(p.x - e.x) + abs(p.y - e.y) <= e.spot + 4:
+            if self._on_water(p) and abs(p.x - e.x) + abs(p.y - e.y) <= VISION_TILES:
                 tgt = p
             else:
-                e.target_pid = None
+                e.target_pid = None  # out of sight (or reached land) — give up
         if tgt is None:
             best = None
             for p in self.players.values():
