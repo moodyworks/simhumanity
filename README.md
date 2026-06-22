@@ -9,6 +9,9 @@ actions are turned by AI into the **ruins** you dig up and the **distorted
 myths** later-era players inherit and argue about. The past literally becomes
 the future's content.
 
+> **See [`DESIGN.md`](DESIGN.md)** for the full, living design document —
+> every feature, the controls, the config, and the roadmap. Keep it updated.
+
 ## Architecture
 
 - **Python authoritative tick server** runs the deterministic sim every tick
