@@ -272,10 +272,27 @@ homes and businesses appropriate to the era — visit a **smith**, **trade**,
 
 ## Sessions / persistence
 
-**Each game is fresh (for now):** when a player joins an empty world, the server
-starts a brand-new World, so prior excavations/ruins/cities don't carry over. The
-event log persists to SQLite but the World does not yet load from it. (Real
-persistence + chunked loading is in the Roadmap.)
+**Each game is fresh (for now):** every server (re)start **wipes the persisted
+event-log DB**, and the world also resets when a player joins an empty world or
+the last player leaves — so nothing carries over a hard reset. (Real persistence
++ chunked loading is in the Roadmap.)
+
+## Placing real locations (cities & sites) — how to accurize
+
+Cities/sites are placed by converting real `(lon, lat)` to a map tile via a
+**linear transform** with hand-estimated border coordinates (`LON_W/E`,
+`LAT_N/S` in `landmarks.py`). That estimate is imperfect, so some placements
+drift (worst in the east), landing in the sea and snapping to the wrong land. To
+correct a placement:
+1. **Hand-pin** it: add a `"tile": (x, y)` to the entry (cities.py / landmarks.py),
+   verified against a gridded render of `medsmall.jpg` (overlay a tile grid, read
+   off the right tile). This is what's done for the few the transform misplaces.
+2. Or **recalibrate the transform** globally: pin a few unambiguous features
+   (Gibraltar, the Nile delta, the Bosphorus) to their true pixels and solve for
+   accurate border coordinates — fixes everything at once.
+
+For the **real world map** (Roadmap), bake accurate coordinates in from the start
+(a proper projection, or author placements directly on the new map).
 
 ## Changelog
 

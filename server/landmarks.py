@@ -44,12 +44,13 @@ SITES: list[dict] = [
      "note": "An ancient Phoenician port, one of the oldest cities on Earth; our "
              "word 'Bible' descends from its name."},
     {"name": "Memphis & Giza", "lon": 31.13, "lat": 29.98, "era": "c. 2600 BC",
+     "tile": (252, 162),  # on the Egyptian mainland (its lon/lat lands at sea)
      "note": "The capital of the Old Kingdom and its pyramids — the last "
              "surviving wonder of the ancient world."},
     {"name": "Carthage", "lon": 10.32, "lat": 36.85, "era": "c. 814 BC",
      # Its computed point falls in the Sicilian Strait; pin to the Cap Bon
-     # (Tunisia) peninsula that juts north toward Sicily on this map.
-     "tile": (130, 81),
+     # peninsula of NE Tunisia (verified against the map grid).
+     "tile": (110, 84),
      "note": "The Phoenician sea-empire that rose to rival Rome across the "
              "western Mediterranean."},
     {"name": "Ġgantija", "lon": 14.27, "lat": 36.05, "era": "c. 3600 BC",

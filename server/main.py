@@ -24,6 +24,13 @@ from .world import World
 
 CLIENT_DIR = Path(__file__).resolve().parent.parent / "client"
 
+# For now, every server (re)start is a completely fresh game: wipe the persisted
+# event log so nothing carries over a hard reset. (Real persistence is future.)
+for _suffix in ("", "-wal", "-shm"):
+    _f = Path(str(SETTINGS.db_path) + _suffix)
+    if _f.exists():
+        _f.unlink()
+
 log = EventLog(SETTINGS.db_path)
 def _new_world() -> World:
     return World(
