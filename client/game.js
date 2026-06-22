@@ -671,9 +671,15 @@ function draw() {
     }
   }
 
-  // Famous ancient sites — a gold star marking an excavatable site. If a city
-  // of the same name sits here too, the city draws the label (avoid duplicates).
-  const cityTiles = new Set((state.cities || []).map((c) => c.x + "," + c.y));
+  // Famous ancient sites — a gold star marking an excavatable site. Suppress a
+  // landmark's label only when a city that's *actually drawn here* shows its own
+  // (so an unfounded/fogged city doesn't leave a nameless star).
+  const cityTiles = new Set();
+  for (const c of state.cities || []) {
+    if (c.stage === 0 && c.max === 0) continue;
+    if (fogEnabled && !(explored && explored[c.y] && explored[c.y][c.x])) continue;
+    cityTiles.add(c.x + "," + c.y);
+  }
   for (const lm of landmarks) {
     const px = offX + lm.x * TILE;
     const py = offY + lm.y * TILE;
