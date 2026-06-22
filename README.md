@@ -94,7 +94,10 @@ turn them up for the fast early-game feel, down for long multi-week arcs.
 
 `tools/build_map.py` also writes `med_classified_preview.png` to eyeball the
 classification. Tweak the colour thresholds / biome noise there.
-- **Eras + season clock** (Stone → Bronze) with an automatic era transition.
+- **Eras + season clock** running the full arc (Stone → Bronze → Iron →
+  Classical → Feudal → Industrial → Atomic → Space) with an in-world year that
+  advances through each age; automatic era transitions decay standing works into
+  ruins. Era→date ranges live in `ERA_DATES` (`server/world.py`).
 - **Building** (hut / stone circle / cache) and **archaeology**: at the era
   transition the prior age's structures decay into buried ruins, which players
   `dig` to recover artifacts and the true record of who built what.

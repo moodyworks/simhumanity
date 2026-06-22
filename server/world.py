@@ -65,11 +65,21 @@ COAST_ITEMS = ["shells", "clay", "reeds"]  # found on land next to the sea
 
 # The season's progression. The world advances through these in order; at each
 # boundary the prior age's works decay into diggable ruins.
-ERA_ORDER = ["stone", "bronze"]
+ERA_ORDER = ["stone", "bronze", "iron", "classical", "feudal",
+             "industrial", "atomic", "space"]
 
 # Approximate (start, end) calendar year per era (negative = BC). The in-world
-# date counts down through these as the season advances.
-ERA_DATES = {"stone": (-10000, -3300), "bronze": (-3300, -1200)}
+# date moves through these as the season advances.
+ERA_DATES = {
+    "stone": (-10000, -3300),
+    "bronze": (-3300, -1200),
+    "iron": (-1200, -500),
+    "classical": (-500, 500),
+    "feudal": (500, 1500),
+    "industrial": (1500, 1900),
+    "atomic": (1900, 2000),
+    "space": (2000, 2200),
+}
 
 # What players can build comes from the discoverable plans catalog.
 STRUCTURES = PLANS  # alias: salvage/label lookups share the plan cost/label data

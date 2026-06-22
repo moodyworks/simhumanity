@@ -583,8 +583,15 @@ function draw() {
     ctx.fillText(lm.name, cx, py - 5);
   }
 
-  // Entities: merchants, wanderers, roaming brigands.
+  // Entities: merchants, wanderers, brigands, sea monsters. Mobile creatures
+  // are only shown within your current line of sight (vision radius) — unless
+  // fog is toggled off (O), which reveals them all.
+  const selfNow = me();
   for (const en of state.entities || []) {
+    if (fogEnabled && selfNow) {
+      const ddx = en.x - selfNow.x, ddy = en.y - selfNow.y;
+      if (ddx * ddx + ddy * ddy > VISION * VISION) continue; // out of sight
+    }
     const px = offX + en.x * TILE, py = offY + en.y * TILE;
     if (px < -TILE || py < -TILE || px > canvas.width || py > canvas.height)
       continue;
