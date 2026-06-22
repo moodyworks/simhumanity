@@ -324,8 +324,11 @@ class World:
 
     def _place_cities(self) -> None:
         for c in CITIES:
-            tx, ty = to_tile(c["lon"], c["lat"], self.width, self.height)
-            land = self._nearest_land(tx, ty, max_r=18)
+            if "tile" in c:  # hand-pinned where the stylized coast misleads
+                land = self._nearest_land(*c["tile"], max_r=4) or c["tile"]
+            else:
+                tx, ty = to_tile(c["lon"], c["lat"], self.width, self.height)
+                land = self._nearest_land(tx, ty, max_r=18)
             if not land:
                 continue
             self.cities.append({"name": c["name"], "x": land[0], "y": land[1],
