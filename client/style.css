@@ -27,6 +27,19 @@ html, body { height: 100%; background: #11131a; overflow: hidden;
 #title { font-weight: 700; font-size: 15px; }
 #era { color: #8fb7ff; font-weight: 400; }
 #clock { color: #9aa3b2; font-size: 12px; }
+#hpbar {
+  position: relative; margin-top: 6px; width: 200px; height: 16px;
+  background: #2a1518; border: 1px solid #3a2024; border-radius: 4px;
+  overflow: hidden;
+}
+#hpfill {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 100%;
+  background: #4caf50; transition: width 0.25s ease, background 0.25s ease;
+}
+#hptext {
+  position: absolute; inset: 0; text-align: center; line-height: 16px;
+  font-size: 11px; color: #fff; text-shadow: 0 1px 1px rgba(0,0,0,0.8);
+}
 #vitals { margin-top: 4px; font-size: 13px; color: #e7c98a; }
 #inv { margin-top: 6px; font-size: 13px; color: #cde8c9; }
 #lore { font-size: 12px; color: #c9a85a; }

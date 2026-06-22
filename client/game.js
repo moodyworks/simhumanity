@@ -792,10 +792,14 @@ function updateHud() {
   document.getElementById("inv").textContent =
     parts.length ? parts.join("  ·  ") : "(empty pack)";
   const lore = self ? (self.lore || 0) : 0;
-  const hp = self ? self.hp : 0, maxhp = self ? self.max_hp : 100;
+  const hp = self ? Math.max(0, self.hp) : 0, maxhp = self ? self.max_hp : 100;
   const coin = self ? (self.coin || 0) : 0;
-  document.getElementById("vitals").textContent =
-    `HP ${hp}/${maxhp} · ${coin} coin · renown ${lore}`;
+  const pct = maxhp ? hp / maxhp : 0;
+  const fill = document.getElementById("hpfill");
+  fill.style.width = `${pct * 100}%`;
+  fill.style.background = pct > 0.6 ? "#4caf50" : pct > 0.3 ? "#d4a017" : "#d9433a";
+  document.getElementById("hptext").textContent = `♥ ${hp}/${maxhp}`;
+  document.getElementById("vitals").textContent = `${coin} coin · renown ${lore}`;
   document.getElementById("lore").textContent = "";
 }
 
