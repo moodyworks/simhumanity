@@ -446,6 +446,55 @@ function me() {
   return state.players.find((p) => p.pid === myPid) || null;
 }
 
+// Deterministic settlement: buildings within a radius set by stage, faded ruins
+// in the former extent when a city has declined, plus a name label.
+function drawCity(px, py, c) {
+  const stage = c.stage, mx = c.max;
+  let s = (c.x * 92821 + c.y * 68917) >>> 0;
+  const rnd = () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296);
+  const ringR = (lvl) => lvl * 7 + 4; // pixel radius per stage level
+
+  // Faded ruins in the ring(s) the city has shrunk out of.
+  if (mx > stage) {
+    for (let lvl = stage + 1; lvl <= mx; lvl++) {
+      const r = ringR(lvl), n = lvl * 3;
+      for (let i = 0; i < n; i++) {
+        const a = rnd() * Math.PI * 2, rr = r * (0.6 + 0.4 * rnd());
+        const bx = px + Math.cos(a) * rr, by = py + Math.sin(a) * rr;
+        ctx.fillStyle = "rgba(120,110,96,0.5)";
+        ctx.fillRect(bx - 1.5, by - 1.5, 3, 3);
+      }
+    }
+  }
+  // Living buildings, denser and larger with stage.
+  if (stage > 0) {
+    const r = ringR(stage), n = stage * stage * 4;
+    for (let i = 0; i < n; i++) {
+      const a = rnd() * Math.PI * 2, rr = r * Math.sqrt(rnd());
+      const bx = px + Math.cos(a) * rr, by = py + Math.sin(a) * rr;
+      const sz = 2 + stage * 0.4;
+      ctx.fillStyle = i % 4 === 0 ? "#caa46a" : "#9c7846";
+      ctx.fillRect(bx - sz / 2, by - sz / 2, sz, sz);
+    }
+    if (stage >= 3) {            // a wall ring for cities/metropolises
+      ctx.strokeStyle = "rgba(210,200,180,0.5)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(px, py, r + 2, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
+  // Label.
+  const label = stage === 0 ? `${c.name} (ruins)` : c.name;
+  ctx.font = stage >= 3 ? "bold 12px monospace" : "11px monospace";
+  ctx.textAlign = "center";
+  const lw = ctx.measureText(label).width + 8;
+  ctx.fillStyle = "rgba(0,0,0,0.5)";
+  ctx.fillRect(px - lw / 2, py - ringR(Math.max(stage, mx)) - 16, lw, 13);
+  ctx.fillStyle = stage === 0 ? "#b8a98c" : "#f0e2bf";
+  ctx.fillText(label, px, py - ringR(Math.max(stage, mx)) - 6);
+}
+
 function drawStar(cx, cy, points, outer, inner, fill, stroke) {
   ctx.beginPath();
   for (let i = 0; i < points * 2; i++) {
@@ -581,6 +630,15 @@ function draw() {
     ctx.font = "11px monospace";
     ctx.textAlign = "center";
     ctx.fillText(lm.name, cx, py - 5);
+  }
+
+  // Cities: settlements that grow and crumble across the ages.
+  for (const c of state.cities || []) {
+    if (fogEnabled && !(explored && explored[c.y] && explored[c.y][c.x])) continue;
+    const px = offX + c.x * TILE + TILE / 2, py = offY + c.y * TILE + TILE / 2;
+    if (px < -120 || py < -80 || px > canvas.width + 120 || py > canvas.height + 40)
+      continue;
+    drawCity(px, py, c);
   }
 
   // Entities: merchants, wanderers, brigands, sea monsters. Mobile creatures
@@ -771,6 +829,16 @@ function renderMinimap() {
     if (!seen(lm.x, lm.y)) continue;
     m.fillStyle = "#ffd86b";
     m.fillRect(lm.x / mapW * MW - 1, lm.y / mapH * MH - 1, 2.5, 2.5);
+  }
+
+  // Cities you've discovered — size/brightness by stage.
+  if (state) {
+    for (const c of state.cities || []) {
+      if (!seen(c.x, c.y) || c.stage <= 0) continue;
+      const sz = 1 + c.stage * 0.6;
+      m.fillStyle = c.stage >= 3 ? "#fff2cf" : "#d8b87a";
+      m.fillRect(c.x / mapW * MW - sz / 2, c.y / mapH * MH - sz / 2, sz, sz);
+    }
   }
 
   // Players — yourself always; others only where you've explored.

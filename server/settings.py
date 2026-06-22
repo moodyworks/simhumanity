@@ -59,7 +59,7 @@ def load_settings() -> Settings:
         port=int(os.environ.get("SIMHUMANITY_PORT", "8000")),
         tick_hz=float(os.environ.get("SIMHUMANITY_TICK_HZ", "3")),
         minutes_per_tick=int(os.environ.get("SIMHUMANITY_MINUTES_PER_TICK", "30")),
-        ticks_per_era=int(os.environ.get("SIMHUMANITY_TICKS_PER_ERA", "600")),
+        ticks_per_era=int(os.environ.get("SIMHUMANITY_TICKS_PER_ERA", "1350")),
         ai_provider=os.environ.get("SIMHUMANITY_AI_PROVIDER", "auto"),
         deepseek_api_key=os.environ.get("SIMHUMANITY_DEEPSEEK_API_KEY", ""),
         deepseek_model=os.environ.get("SIMHUMANITY_DEEPSEEK_MODEL", "deepseek-chat"),

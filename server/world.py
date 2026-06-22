@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from . import economy
+from .cities import CITIES, city_stage
 from .entities import (Entity, make_brigand, make_merchant, make_monster,
                        make_wanderer)
 from .eventlog import EventLog
@@ -71,14 +72,14 @@ ERA_ORDER = ["stone", "bronze", "iron", "classical", "feudal",
 # Approximate (start, end) calendar year per era (negative = BC). The in-world
 # date moves through these as the season advances.
 ERA_DATES = {
-    "stone": (-10000, -3300),
+    "stone": (-50000, -3300),   # deep prehistory absorbs most of the timeline
     "bronze": (-3300, -1200),
     "iron": (-1200, -500),
     "classical": (-500, 500),
     "feudal": (500, 1500),
     "industrial": (1500, 1900),
     "atomic": (1900, 2000),
-    "space": (2000, 2200),
+    "space": (2000, 5000),
 }
 
 # What players can build comes from the discoverable plans catalog.
@@ -202,6 +203,10 @@ class World:
         self.landmarks: list[Landmark] = []
         self.landmark_at: dict[tuple[int, int], Landmark] = {}
         self._place_landmarks()
+        # Major cities that rise and fall on their real historical timeline.
+        self.cities: list[dict] = []
+        self._place_cities()
+        self._update_cities()
         # In-progress site quizzes, keyed by (pid, x, y) → {qid: question}.
         self._site_sessions: dict[tuple, dict] = {}
         # Index of standing structures by tile, for fast ownership/benefit checks.
@@ -311,6 +316,26 @@ class World:
 
     def landmarks_public(self) -> list[dict]:
         return [lm.to_public() for lm in self.landmarks]
+
+    def _place_cities(self) -> None:
+        for c in CITIES:
+            tx, ty = to_tile(c["lon"], c["lat"], self.width, self.height)
+            land = self._nearest_land(tx, ty, max_r=18)
+            if not land:
+                continue
+            self.cities.append({"name": c["name"], "x": land[0], "y": land[1],
+                                "timeline": c["timeline"], "stage": 0, "max": 0})
+
+    def _update_cities(self) -> None:
+        """Advance each city's stage to match the current in-world year."""
+        year = self.era_year()
+        for c in self.cities:
+            c["stage"] = city_stage(c["timeline"], year)
+            c["max"] = max(c["max"], c["stage"])
+
+    def cities_public(self) -> list[dict]:
+        return [{"x": c["x"], "y": c["y"], "name": c["name"],
+                 "stage": c["stage"], "max": c["max"]} for c in self.cities]
 
     def excavate_landmark(self, pid: str) -> dict | None:
         """Standing on an ancient site opens its study quiz. The relic is only
@@ -1188,6 +1213,9 @@ class World:
                 if p.hp < p.max_hp:
                     heal = 4 if self._near_own(p, "hut") else 1
                     p.hp = min(p.max_hp, p.hp + heal)
+        # Cities rise and fall with the years.
+        if self.tick_count % 10 == 0:
+            self._update_cities()
         # Stone circles are monuments — they earn their builder renown over time.
         if self.tick_count % 30 == 0:
             for s in self.structures.values():
@@ -1279,6 +1307,7 @@ class World:
             "item_changes": self.pop_item_changes(),
             "structures": structures,
             "ruins": ruins,
+            "cities": self.cities_public(),
             "entities": [e.to_public() for e in self.entities.values() if e],
             "combat": self.pop_combat_events(),
             "players": [p.to_public() for p in self.players.values()],
