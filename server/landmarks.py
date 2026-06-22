@@ -9,6 +9,8 @@ Pure data + math — no image/Pillow dependency, safe to import at runtime.
 """
 from __future__ import annotations
 
+import math
+
 # Geographic bounds of medsmall.jpg, in degrees. Calibrated visually so the
 # graticule and known features (Gibraltar, the Nile delta, the Bosphorus,
 # Crete, Cyprus) line up with the image. x grows east, y grows south.
@@ -66,6 +68,13 @@ def to_tile(lon: float, lat: float, width: int, height: int) -> tuple[int, int]:
     x = (lon - LON_W) / (LON_E - LON_W) * (width - 1)
     y = (LAT_N - lat) / (LAT_N - LAT_S) * (height - 1)
     return round(x), round(y)
+
+
+def km_per_tile(width: int, height: int) -> float:
+    """Real-world kilometres each map tile spans (horizontal, at mid-latitude)."""
+    mid_lat = (LAT_N + LAT_S) / 2
+    km_per_deg_lon = 111.32 * math.cos(math.radians(mid_lat))
+    return (LON_E - LON_W) * km_per_deg_lon / max(1, width - 1)
 
 
 # False claims rotated through the third quiz question, for variety.

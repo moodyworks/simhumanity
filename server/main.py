@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .ai import MythEngine, make_provider
 from .eventlog import EventLog
+from .landmarks import km_per_tile
 from .quests import build_claims
 from .settings import SETTINGS
 from .world import World
@@ -175,6 +176,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
         # terrain caps (see RESOURCE_CAP) and applies per-tick deltas thereafter.
         "items": world.items_list(),          # full once; deltas follow per tick
         "landmarks": world.landmarks_public(),  # famous ancient sites (static)
+        "km_per_tile": km_per_tile(world.width, world.height),
     }))
     await ws.send_text(json.dumps({"type": "plans", "plans": world.known_plans(pid)}))
     await ws.send_text(json.dumps({"type": "relics", "relics": world.relics(pid)}))

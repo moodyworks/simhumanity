@@ -648,6 +648,24 @@ class World:
             else:
                 self._wander(e)
 
+    def _chase(self, e: Entity, tgt: Player, stepfn) -> None:
+        """Move e toward tgt at its own speed (tiles/tick), stopping when next
+        to the target. Random per-mob speed makes some catchable and some not."""
+        e.move_accum += e.speed
+        while e.move_accum >= 1.0:
+            e.move_accum -= 1.0
+            if abs(tgt.x - e.x) + abs(tgt.y - e.y) <= 1:
+                break  # adjacent — the attack is handled by the caller
+            sx = (tgt.x > e.x) - (tgt.x < e.x)
+            sy = (tgt.y > e.y) - (tgt.y < e.y)
+            before = (e.x, e.y)
+            if sx:
+                stepfn(e, e.x + sx, e.y)
+            if (e.x, e.y) == before and sy:
+                stepfn(e, e.x, e.y + sy)
+            if (e.x, e.y) == before:
+                break  # blocked
+
     def _update_brigand(self, e: Entity) -> None:
         tgt = None
         if e.target_pid in self.players:
@@ -662,20 +680,15 @@ class World:
                 e.target_pid = p.pid
                 tgt = p
         if tgt is None:
+            e.move_accum = 0.0
             self._wander(e)
             return
         if abs(tgt.x - e.x) + abs(tgt.y - e.y) <= 1:
             if e.cooldown == 0:
                 self._entity_attacks(e, tgt)
                 e.cooldown = 2
-        else:  # chase greedily over land
-            sx = (tgt.x > e.x) - (tgt.x < e.x)
-            sy = (tgt.y > e.y) - (tgt.y < e.y)
-            before = (e.x, e.y)
-            if sx:
-                self._land_step(e, e.x + sx, e.y)
-            if (e.x, e.y) == before and sy:
-                self._land_step(e, e.x, e.y + sy)
+        else:
+            self._chase(e, tgt, self._land_step)
 
     def _update_monster(self, e: Entity) -> None:
         """A sea beast hunts only players who are out on the water (in a boat),
@@ -699,20 +712,15 @@ class World:
                 e.target_pid = best[1].pid
                 tgt = best[1]
         if tgt is None:
+            e.move_accum = 0.0
             self._wander_water(e)
             return
         if abs(tgt.x - e.x) + abs(tgt.y - e.y) <= 1:
             if e.cooldown == 0:
                 self._entity_attacks(e, tgt)
                 e.cooldown = 2
-        elif self.tick_count % 2 == 0:  # move at boat speed so it can be outrun
-            sx = (tgt.x > e.x) - (tgt.x < e.x)
-            sy = (tgt.y > e.y) - (tgt.y < e.y)
-            before = (e.x, e.y)
-            if sx:
-                self._water_step(e, e.x + sx, e.y)
-            if (e.x, e.y) == before and sy:
-                self._water_step(e, e.x, e.y + sy)
+        else:
+            self._chase(e, tgt, self._water_step)
 
     def _best_weapon(self, p: Player) -> int:
         return max((economy.WEAPON_ATK[i] for i in p.inventory
@@ -1037,6 +1045,22 @@ class World:
         tile = self.tiles[p.y][p.x]
         ruin = tile.ruin
         if not ruin or ruin.excavated:
+            # Bone sites sometimes hide buried loot (consumes the bones).
+            if tile.item == "bones":
+                tile.item = None
+                self._item_changes.append({"x": p.x, "y": p.y, "type": None})
+                if random.random() < 0.4:  # less than even odds
+                    drops = economy.roll_loot(self._erng, random.randint(1, 2))
+                    for it in drops:
+                        p.inventory[it] = p.inventory.get(it, 0) + 1
+                    self.log.append(world_time=self.world_time, era=self.era,
+                                    kind="dig_loot", actor=pid, x=p.x, y=p.y,
+                                    data={"drops": drops})
+                    return {"text": f"You dig beneath the bones and unearth "
+                                    f"buried loot: {', '.join(drops)}!",
+                            "excavation": None}
+                return {"text": "You dig beneath the bones, but find only dust.",
+                        "excavation": None}
             return {"text": "You dig, but find nothing but dirt.",
                     "excavation": None}
         ruin.excavated = True

@@ -34,8 +34,10 @@ class Entity:
     hp: int = 20
     max_hp: int = 20
     atk: int = 0
-    spot: int = 0         # tiles at which a brigand notices a player
+    spot: int = 0         # tiles at which a hunter notices a player
     cooldown: int = 0     # ticks until it can act/attack again
+    speed: float = 1.0    # tiles per tick when chasing (randomized per mob)
+    move_accum: float = 0.0
     target_pid: str | None = None
     path: list = field(default_factory=list)
     data: dict = field(default_factory=dict)  # wares / line / loot
@@ -58,10 +60,19 @@ def make_merchant(eid: str, x: int, y: int, rng: random.Random) -> Entity:
                   data={"line": "Wares to sell, coin for your goods — come, look."})
 
 
+def _roll_speed(rng: random.Random, base: float) -> float:
+    """~60% slightly slower than the player's pace (evadable), ~40% faster
+    (forces a fight). `base` is the player's flee speed for that medium."""
+    if rng.random() < 0.6:
+        return round(base * rng.uniform(0.7, 0.95), 2)
+    return round(base * rng.uniform(1.05, 1.35), 2)
+
+
 def make_brigand(eid: str, x: int, y: int, rng: random.Random) -> Entity:
     hp = rng.randint(16, 28)
     return Entity(eid, "brigand", rng.choice(BRIGAND_NAMES), x, y,
                   hp=hp, max_hp=hp, atk=rng.randint(4, 8), spot=6,
+                  speed=_roll_speed(rng, 1.0),  # vs a walking player
                   data={"loot_coin": rng.randint(3, 12)})
 
 
@@ -71,4 +82,5 @@ def make_monster(eid: str, x: int, y: int, rng: random.Random) -> Entity:
     hp = rng.randint(40, 75)
     return Entity(eid, "monster", rng.choice(MONSTER_NAMES), x, y,
                   hp=hp, max_hp=hp, atk=rng.randint(8, 15), spot=7,
+                  speed=_roll_speed(rng, 0.5),  # vs a boat (water speed 0.5)
                   data={"loot_coin": rng.randint(10, 30)})

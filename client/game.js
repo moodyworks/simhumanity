@@ -49,12 +49,35 @@ let buildMenuOpen = false;
 let explored = null;      // Uint8Array[h][w] of tiles ever seen (fog of war)
 let fogCanvas = null;     // map-res fog layer (opaque where unexplored), for the minimap
 let fogCtx = null;
+let visibleSet = null;    // "x,y" tiles in current line of sight (recomputed each draw)
 const VISION = 8;         // tile radius the player currently sees
+
+// Mountains and glaciers block sight.
+function isOpaque(x, y) {
+  const t = terrain[y] && terrain[y][x];
+  return t === "M" || t === "G";
+}
+// Bresenham line of sight: clear unless an opaque tile lies before the target.
+function hasLOS(px, py, tx, ty) {
+  let x = px, y = py;
+  const dx = Math.abs(tx - px), dy = Math.abs(ty - py);
+  const sx = px < tx ? 1 : -1, sy = py < ty ? 1 : -1;
+  let err = dx - dy;
+  for (let i = 0; i < dx + dy + 2; i++) {
+    const e2 = 2 * err;
+    if (e2 > -dy) { err -= dy; x += sx; }
+    if (e2 < dx) { err += dy; y += sy; }
+    if (x === tx && y === ty) return true;
+    if (isOpaque(x, y)) return false;
+  }
+  return true;
+}
 let floaters = [];        // floating combat damage numbers {x,y,dmg,age}
 let merchantView = null;  // open barter session {eid,...}
 let myRelics = [];        // this player's relics {id,name,clue,source}
 let relicPanelOpen = false;
 let fogEnabled = true;    // debug toggle for fog of war
+let kmPerTile = 0;        // real km each tile spans, for the scale bar
 
 function resize() {
   canvas.width = window.innerWidth;
@@ -83,6 +106,7 @@ function connect() {
       itemsMap = {};
       for (const it of msg.items || []) itemsMap[it.x + "," + it.y] = it.type;
       landmarks = msg.landmarks || [];
+      kmPerTile = msg.km_per_tile || 0;
       explored = Array.from({ length: mapH }, () => new Uint8Array(mapW));
       // Fog layer for the minimap: starts fully dark, cleared as tiles are seen.
       fogCanvas = document.createElement("canvas");
@@ -521,6 +545,24 @@ function draw() {
   if (followPlayer && self) { camera.x = self.x; camera.y = self.y; }
   const { offX, offY } = cameraOffset();
 
+  // Compute the set of currently-visible tiles: within vision AND with clear
+  // line of sight (mountains/glaciers block the view). Reveals fog as you go.
+  visibleSet = null;
+  if (explored && self) {
+    visibleSet = new Set();
+    const x0v = Math.max(0, self.x - VISION), x1v = Math.min(mapW - 1, self.x + VISION);
+    const y0v = Math.max(0, self.y - VISION), y1v = Math.min(mapH - 1, self.y + VISION);
+    for (let yy = y0v; yy <= y1v; yy++) {
+      for (let xx = x0v; xx <= x1v; xx++) {
+        const ddx = xx - self.x, ddy = yy - self.y;
+        if (ddx * ddx + ddy * ddy > VISION * VISION) continue;
+        if (!hasLOS(self.x, self.y, xx, yy)) continue;
+        visibleSet.add(xx + "," + yy);
+        if (!explored[yy][xx]) { explored[yy][xx] = 1; fogCtx.clearRect(xx, yy, 1, 1); }
+      }
+    }
+  }
+
   // Only iterate the tiles actually on screen — the map is large (300x219).
   const x0 = Math.max(0, Math.floor(-offX / TILE));
   const y0 = Math.max(0, Math.floor(-offY / TILE));
@@ -644,12 +686,10 @@ function draw() {
   // Entities: merchants, wanderers, brigands, sea monsters. Mobile creatures
   // are only shown within your current line of sight (vision radius) — unless
   // fog is toggled off (O), which reveals them all.
-  const selfNow = me();
   for (const en of state.entities || []) {
-    if (fogEnabled && selfNow) {
-      const ddx = en.x - selfNow.x, ddy = en.y - selfNow.y;
-      if (ddx * ddx + ddy * ddy > VISION * VISION) continue; // out of sight
-    }
+    // Only show creatures in current line of sight (unless fog is off).
+    if (fogEnabled && (!visibleSet || !visibleSet.has(en.x + "," + en.y)))
+      continue;
     const px = offX + en.x * TILE, py = offY + en.y * TILE;
     if (px < -TILE || py < -TILE || px > canvas.width || py > canvas.height)
       continue;
@@ -760,19 +800,11 @@ function draw() {
     ctx.fillText(p.name, px + TILE / 2, py - 2);
   }
 
-  // ---- fog of war: clear within vision, dim the explored, hide the unknown.
-  if (explored && self) {
+  // ---- fog of war: visible (LOS) tiles are clear; explored dims; rest hidden.
+  if (explored && self && fogEnabled) {
     for (let y = y0; y < y1; y++) {
       for (let x = x0; x < x1; x++) {
-        const dx = x - self.x, dy = y - self.y;
-        if (dx * dx + dy * dy <= VISION * VISION) {
-          if (!explored[y][x]) {           // newly seen — also clear minimap fog
-            explored[y][x] = 1;
-            fogCtx.clearRect(x, y, 1, 1);
-          }
-          continue;
-        }
-        if (!fogEnabled) continue;         // debug: fog off → reveal everything
+        if (visibleSet && visibleSet.has(x + "," + y)) continue; // in sight
         ctx.fillStyle = explored[y][x] ? "rgba(8,9,14,0.55)" : "rgba(8,9,14,1)";
         ctx.fillRect(offX + x * TILE, offY + y * TILE, TILE, TILE);
       }
@@ -780,6 +812,25 @@ function draw() {
   }
 
   renderMinimap();
+  drawScaleBar();
+}
+
+// A distance scale bar in the bottom-right, in km and miles.
+function drawScaleBar() {
+  if (!kmPerTile) return;
+  const nice = [5, 10, 20, 50, 100, 200, 500, 1000];
+  let km = nice[0];
+  for (const k of nice) if ((k / kmPerTile) * TILE <= 170) km = k;
+  const w = (km / kmPerTile) * TILE;
+  const x = canvas.width - w - 24, y = canvas.height - 26;
+  ctx.fillStyle = "rgba(0,0,0,0.45)";
+  ctx.fillRect(x - 8, y - 22, w + 16, 30);
+  ctx.strokeStyle = "#fff"; ctx.fillStyle = "#fff"; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x, y - 5); ctx.lineTo(x, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y - 5);
+  ctx.stroke();
+  ctx.font = "12px monospace"; ctx.textAlign = "center";
+  ctx.fillText(`${km} km · ${Math.round(km * 0.621)} mi`, x + w / 2, y - 9);
 }
 
 // ---- minimap --------------------------------------------------------------
