@@ -239,6 +239,22 @@ class World:
         progress = min(1.0, max(0.0, into / span))
         return round(start + (end - start) * progress)
 
+    def set_year(self, year: int) -> None:
+        """Debug: jump the clock to a given year and repopulate time-based assets
+        (city stages). Sets era_index + tick_count so era_year() matches."""
+        lo = ERA_DATES[ERA_ORDER[0]][0]
+        hi = ERA_DATES[ERA_ORDER[-1]][1]
+        year = max(lo, min(hi, int(year)))
+        span = max(1, self.ticks_per_era)
+        for i, era in enumerate(ERA_ORDER):
+            start, end = ERA_DATES[era]
+            if start <= year <= end:
+                self.era_index = i
+                progress = (year - start) / (end - start) if end != start else 0.0
+                self.tick_count = round(i * span + progress * span)
+                break
+        self._update_cities()
+
     # ---- world generation -------------------------------------------------
     def _generate(self) -> list[list[Tile]]:
         """Build the tile grid from the stylized Mediterranean map, then

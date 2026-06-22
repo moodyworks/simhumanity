@@ -71,6 +71,8 @@ they inherit and argue about. The past literally becomes the future's content.
   (impassable), **glacier** (impassable), **pass** (walkable). Mountains/glaciers
   block movement *and* line of sight; historical passes (Great St Bernard,
   Brenner, Cilician Gates, …) punch walkable gaps. Map stays ~94% connected.
+  Ranges are ringed by **rocky foothills** (hills/stone), so **stone is plentiful
+  near the mountains**.
 - **Ground items** scattered by region (olives/grapes on grass, flint/obsidian
   in hills, shells/clay/reeds on coasts, **bones** in desert…).
 - **Minimap** (top-right) shows the basin, discovered sites/cities, players, and
@@ -118,8 +120,10 @@ they inherit and argue about. The past literally becomes the future's content.
   and glaciers block the view (not a bare radius).
 - **Enemies and NPCs are only drawn within current line of sight.**
 - Fog also applies to the **minimap** (and to discovered sites/cities/players).
-- **Debug:** toggle fog with the **Fog** button or **O** (reveals everything,
-  including all mobs).
+- **Debug mode** (**O** key / **Debug** button): reveals the whole map (fog off,
+  all mobs visible) and turns the **age/year label into a control — click it to
+  type a year** and jump the world clock there; assets repopulate for that year
+  (cities rise/fall to their stage, era updates). Great for testing the timeline.
 
 ---
 
@@ -275,6 +279,10 @@ persistence + chunked loading is in the Roadmap.)
 
 ## Changelog
 
+- **2026-06-22 (latest+1)** — Debug mode (O): reveal-all + click the age to jump
+  to any year (assets repopulate); stone now plentiful near mountains (rocky
+  foothills); world also resets when the last player leaves (robust fresh games);
+  fixed nameless landmark stars.
 - **2026-06-22 (latest)** — Cache death-stash → buried treasure recovered by
   excavators; fastest-route (time-weighted) auto-travel; fixed misplaced cities
   (Memphis/Alexandria/Carthage/Knossos); settlements no longer spill into water;

@@ -1044,7 +1044,7 @@ window.addEventListener("keydown", (e) => {
     case "f": case "F": sendAction({ action: "interact" }); break;
     case "r": case "R": sendAction({ action: "attack" }); break;
     case "i": case "I": toggleRelics(); break;
-    case "o": case "O": toggleFog(); break;
+    case "o": case "O": toggleDebug(); break;
     case "Escape": closeDialogue(); break;
   }
 });
@@ -1059,11 +1059,14 @@ window.addEventListener("keyup", (e) => {
   }
 });
 
-function toggleFog() {
+// Debug mode = fog off + the age label becomes a click-to-set-year control.
+function toggleDebug() {
   fogEnabled = !fogEnabled;
+  const dbg = !fogEnabled;
   const btn = document.getElementById("fogBtn");
-  if (btn) { btn.textContent = `Fog: ${fogEnabled ? "on" : "off"} (O)`; btn.classList.toggle("off", !fogEnabled); }
-  if (state) draw();
+  if (btn) { btn.textContent = `Debug: ${dbg ? "ON" : "off"} (O)`; btn.classList.toggle("off", dbg); }
+  const era = document.getElementById("era");
+  if (era) era.classList.toggle("debug-clickable", dbg);
 }
 
 // ---- relic inventory: click a relic to read its clue -----------------------
@@ -1125,6 +1128,16 @@ function updateCamera() {
     if (Math.abs(self.y - camera.y) < 0.03) camera.y = self.y;
   }
 }
+
+// Debug mode: click the age/year to jump the world clock to any year.
+document.getElementById("era").addEventListener("click", () => {
+  if (fogEnabled) return;  // only active in debug mode
+  const cur = state ? state.year : 0;
+  const input = prompt("Debug — jump to year (negative = BC, e.g. -450 or 1500):", cur);
+  if (input === null) return;
+  const y = parseInt(input, 10);
+  if (!Number.isNaN(y)) sendAction({ action: "set_year", year: y });
+});
 
 // Continuous render loop so the camera moves smoothly between ticks.
 function renderLoop() {

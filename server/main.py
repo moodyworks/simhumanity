@@ -201,6 +201,8 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 world.move(pid, int(msg.get("dx", 0)), int(msg.get("dy", 0)))
             elif action == "run":
                 world.set_running(pid, bool(msg.get("on")))
+            elif action == "set_year":  # debug: jump the clock
+                world.set_year(int(msg.get("year", 0)))
             elif action == "goto":
                 world.set_goal(pid, int(msg.get("x", -1)), int(msg.get("y", -1)))
             elif action == "attack":
@@ -286,6 +288,10 @@ async def ws_endpoint(ws: WebSocket) -> None:
         _clients.discard(ws)
         _ws_by_pid.pop(pid, None)
         world.remove_player(pid)
+        # When the last player leaves, start a fresh world so the next game
+        # doesn't inherit this one's excavations/ruins/cities (each game fresh).
+        if not _clients:
+            world = _new_world()
 
 
 @app.get("/")

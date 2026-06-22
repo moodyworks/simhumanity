@@ -26,6 +26,10 @@ html, body { height: 100%; background: #11131a; overflow: hidden;
 }
 #title { font-weight: 700; font-size: 15px; }
 #era { color: #8fb7ff; font-weight: 400; }
+#era.debug-clickable {
+  pointer-events: auto; cursor: pointer; text-decoration: underline dotted;
+  color: #ffd86b;
+}
 #clock { color: #9aa3b2; font-size: 12px; }
 #hpbar {
   position: relative; margin-top: 6px; width: 200px; height: 16px;

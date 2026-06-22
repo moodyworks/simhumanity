@@ -11,6 +11,8 @@ bake time (no runtime cost). Tile mapping is shared with landmarks.to_tile.
 """
 from __future__ import annotations
 
+import random
+
 # Each range: a center polyline, a half-width in tiles, glacier cores, and the
 # real passes that cross it.
 RANGES: list[dict] = [
@@ -85,6 +87,27 @@ def stamp(grid: list[list[str]], to_tile, width: int, height: int) -> None:
                 for x in range(max(0, px - w - 1), min(width, px + w + 2)):
                     if grid[y][x] == "P" and _was_sea(grid, x, y):
                         grid[y][x] = "~"
+
+    # Rocky foothills: land beside the ranges turns to hills/stone, so stone is
+    # plentiful near the mountains (and flint/obsidian scatter there too).
+    rngf = random.Random(424242)
+    foot = []
+    for y in range(height):
+        for x in range(width):
+            if grid[y][x] in "gfd" and _near_char(grid, x, y, "M", 2):
+                foot.append((x, y))
+    for x, y in foot:
+        grid[y][x] = "m" if rngf.random() < 0.35 else "h"
+
+
+def _near_char(grid, x, y, ch, r) -> bool:
+    H = len(grid); W = len(grid[0])
+    for dy in range(-r, r + 1):
+        for dx in range(-r, r + 1):
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < W and 0 <= ny < H and grid[ny][nx] == ch:
+                return True
+    return False
 
 
 def _was_sea(grid, x, y) -> bool:
