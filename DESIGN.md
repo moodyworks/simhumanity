@@ -94,7 +94,11 @@ they inherit and argue about. The past literally becomes the future's content.
 ## 4. Movement & camera
 
 - **Tick-paced**, per-player. Set a heading with WASD/arrows; **click the map**
-  to pathfind (BFS) there; **click/drag the minimap** to pan the view only.
+  to auto-travel there; **click/drag the minimap** to pan the view only.
+- **Auto-travel finds the *fastest* (least-time) route**, not the straightest:
+  a Dijkstra weights each tile by its crossing time (water is slow — a boat is
+  half speed), so it routes around the sea via faster land instead of cutting
+  straight across, and through mountain passes rather than into impassable rock.
 - **Speeds:** walk 1.0 tiles/tick; **run (hold Shift) 2.0**; **boat 0.5** on
   water (slower than walking). Sub-tile accumulator.
 - **Boats:** carry one (built by the coast/dock or bought from a shipwright) to

@@ -6,6 +6,7 @@ the game. The LLM layer (DeepSeek) sits above this and is called rarely.
 """
 from __future__ import annotations
 
+import heapq
 import random
 from dataclasses import dataclass, field
 from enum import Enum
@@ -485,25 +486,38 @@ class World:
                 return
             tx, ty = best[1], best[2]
         p.heading = None  # a destination overrides any held heading
-        p.path = self._bfs_path(p, p.x, p.y, tx, ty)
+        p.path = self._find_path(p, p.x, p.y, tx, ty)
 
-    def _bfs_path(self, p: Player, sx: int, sy: int, tx: int,
-                  ty: int) -> list[tuple[int, int]]:
-        """Shortest 4-dir path over tiles this player can enter, sans the start."""
+    def _tile_time_cost(self, x: int, y: int) -> float:
+        """Time to cross a tile = 1 / movement speed there. Water is slow (a boat
+        is half speed), so the pathfinder prefers faster land routes."""
+        return 2.0 if self.tiles[y][x].terrain == Terrain.WATER else 1.0
+
+    def _find_path(self, p: Player, sx: int, sy: int, tx: int,
+                   ty: int) -> list[tuple[int, int]]:
+        """Fastest (least-time) 4-dir path this player can take — Dijkstra over
+        tile crossing-times, so it routes around slow water instead of straight
+        through it. Excludes the start tile."""
         if (sx, sy) == (tx, ty):
             return []
-        from collections import deque
-        prev: dict[tuple[int, int], tuple[int, int]] = {(sx, sy): (sx, sy)}
-        q = deque([(sx, sy)])
-        while q:
-            x, y = q.popleft()
+        dist: dict[tuple[int, int], float] = {(sx, sy): 0.0}
+        prev: dict[tuple[int, int], tuple[int, int]] = {}
+        pq: list[tuple[float, int, int]] = [(0.0, sx, sy)]
+        while pq:
+            d, x, y = heapq.heappop(pq)
             if (x, y) == (tx, ty):
                 break
+            if d > dist.get((x, y), float("inf")):
+                continue
             for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
                 nx, ny = x + dx, y + dy
-                if (nx, ny) not in prev and self._can_enter(p, nx, ny):
+                if not self._can_enter(p, nx, ny):
+                    continue
+                nd = d + self._tile_time_cost(nx, ny)
+                if nd < dist.get((nx, ny), float("inf")):
+                    dist[(nx, ny)] = nd
                     prev[(nx, ny)] = (x, y)
-                    q.append((nx, ny))
+                    heapq.heappush(pq, (nd, nx, ny))
         if (tx, ty) not in prev:
             return []
         path: list[tuple[int, int]] = []
