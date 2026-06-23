@@ -300,6 +300,14 @@ For the **real world map** (Roadmap), bake accurate coordinates in from the star
 
 ## Changelog
 
+- **2026-06-23 (c)** — **Sea painted from GEBCO, not colour.** Colour-classifying
+  water failed on rivers, polar seas and anti-aliased coasts. Now `tile_world.py`
+  composites the sea from authoritative **GEBCO**: water = topo elevation 0,
+  depth-shaded by bathymetry (1km, 2× upsampled to the 500m grid). Clean coasts +
+  full polar oceans + smooth real depth, and the basis for ice-age sea levels.
+  Land keeps the satellite colour. **Rivers/lakes above sea level still pending —
+  next is a Natural Earth rivers overlay.** Viewer also gained a minimap, plain
+  Blue Marble colour, pixel-snapped chunks, and 10× run.
 - **2026-06-23 (b)** — **World-map vertical slice is walkable.** New `/world` page
   (`client/world.html` + `world.js`) streams the real-Earth chunks and lets you
   **walk a pixel-for-pixel patch of Earth** (1 source pixel = 1 tile, real colours,

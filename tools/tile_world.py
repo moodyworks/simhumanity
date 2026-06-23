@@ -77,6 +77,40 @@ def crisp_water(im: Image.Image, band: int = 2048, pad: int = 3) -> Image.Image:
     return im
 
 
+def _find(d: Path, key: str) -> Path | None:
+    for pat in (f"*_{key}_*", f"*{key}*"):
+        m = [p for p in d.glob(pat) if p.suffix.lower() in (".jpg", ".jpeg", ".png")]
+        if m:
+            return m[0]
+    return None
+
+
+def composite_sea(im: Image.Image, topo_path: Path, bath_path: Path,
+                  band: int = 2048) -> Image.Image:
+    """Paint the sea from authoritative GEBCO data instead of guessing from colour:
+    water = land-elevation 0 (topo), depth-shaded by bathymetry. Gives clean coasts
+    and full polar oceans (no colour mis-classification), smooth real depth, and the
+    basis for ice-age sea levels. Land keeps the satellite colour. Rivers/lakes above
+    sea level aren't in this mask — those come from the rivers overlay. GEBCO is
+    half-res (1km), nearest-upsampled 2x to the 500m grid; `band` must be even."""
+    W, H = im.size
+    topo = np.asarray(Image.open(topo_path).convert("L"))
+    bath = np.asarray(Image.open(bath_path).convert("L"))
+    base = np.array([60, 120, 168], np.float32)  # main sea colour
+    for y0 in range(0, H, band):
+        y1 = min(y0 + band, H)
+        a = np.asarray(im.crop((0, y0, W, y1)))
+        g0, g1 = y0 // 2, -(-y1 // 2)
+        water = np.repeat(np.repeat(topo[g0:g1] == 0, 2, 0), 2, 1)[:y1 - y0, :W]
+        deep = np.clip((255 - bath[g0:g1].astype(np.int16)) / 120.0, 0, 1)
+        deep = np.repeat(np.repeat(deep, 2, 0), 2, 1)[:y1 - y0, :W]
+        shade = (base * (1.0 - 0.30 * deep[..., None])).astype(np.uint8)
+        out = a.copy()
+        out[water] = shade[water]
+        im.paste(Image.fromarray(out, "RGB"), (0, y0))
+    return im
+
+
 def _save_kw(ext: str) -> dict:
     return {"quality": 92} if ext in ("jpg", "jpeg") else {}
 
@@ -144,7 +178,9 @@ def tile_nasa(src_dir: Path, chunk: int, ext: str, only: str | None = None) -> N
                 continue
             im = Image.open(paths[cl + rdig]).convert("RGB")
             if CRISP:
-                crisp_water(im)
+                tp = _find(src_dir.parent / "topo", cl + rdig)
+                bp = _find(src_dir.parent / "bath", cl + rdig)
+                composite_sea(im, tp, bp) if (tp and bp) else crisp_water(im)
             for lr in range(cpt):
                 for lc in range(cpt):
                     box = (lc * chunk, lr * chunk, (lc + 1) * chunk, (lr + 1) * chunk)
