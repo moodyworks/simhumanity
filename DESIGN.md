@@ -300,6 +300,13 @@ For the **real world map** (Roadmap), bake accurate coordinates in from the star
 
 ## Changelog
 
+- **2026-06-23 (g)** — **NPCs + combat on the world.** NPCs (wanderer / merchant /
+  brigand / monster) spawn **around players** (the planet's too big to simulate
+  globally), wander or chase; brigands & monsters attack you. **Attack (R)** the
+  nearest NPC in reach — killing drops loot. Players have **HP**; death respawns
+  you at your spawn city and drops half your goods. NPCs render by kind + on the
+  minimap; HP shows in the HUD. Verified: spawn, monster kill → respawn, brigand
+  kill → loot. Still to port: economy/trading, the DeepSeek Myth Engine, boats.
 - **2026-06-23 (f)** — **Eras + archaeology on the world (the Living-History core).**
   A world clock advances through `ERA_DATES` (`WORLD_YEARS_PER_SEC`, default 4).
   When the era turns, structures built in a **prior** era **decay into ruins**;

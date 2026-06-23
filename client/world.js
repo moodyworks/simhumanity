@@ -23,6 +23,7 @@ let spawnCities = [];      // cities of the age — the spawn options
 let ws = null, myPid = null, others = [], lastSent = 0;  // multiplayer presence
 let builds = {}, myInv = {}, structures = [], ruins = []; // gather / build / dig state
 let worldYear = null, worldEra = "";                     // era clock
+let npcs = [], myHp = null, myMaxHp = null;              // NPCs + combat
 const terrainCache = new Map();                          // chunk -> ImageData (land/water)
 let toastT = 0;
 function toast(text) {
@@ -159,6 +160,18 @@ function render() {
     ctx.strokeStyle = "#241c10"; ctx.lineWidth = 1; ctx.strokeRect(sx - TILE / 2, sy - TILE / 2, TILE, TILE);
   }
 
+  // NPCs (wander / chase around you)
+  const npcColor = { wanderer: "#9aa3b0", merchant: "#6fd0c8", brigand: "#e08a3a", monster: "#d24a6a" };
+  for (const n of npcs) {
+    let ox = n.x; const d = ox - px;
+    if (d > man.src_w / 2) ox -= man.src_w; else if (d < -man.src_w / 2) ox += man.src_w;
+    const sx = offX + ox * TILE, sy = offY + n.y * TILE;
+    if (sx < -TILE || sy < -TILE || sx > canvas.width || sy > canvas.height) continue;
+    ctx.fillStyle = npcColor[n.kind] || "#aaa";
+    ctx.beginPath(); ctx.arc(sx, sy, TILE * 0.42, 0, 7); ctx.fill();
+    ctx.strokeStyle = "#000"; ctx.lineWidth = 1; ctx.stroke();
+  }
+
   // other players (multiplayer presence) — drawn at the nearest wrap of their x
   for (const p of others) {
     let ox = p.x; const d = ox - px;
@@ -194,6 +207,10 @@ function render() {
       ctx.fillStyle = "#ffd24a";
       ctx.fillRect(mx + p.x / man.src_w * mmW - 1.5, my + p.y / man.src_h * mmH - 1.5, 3, 3);
     }
+    for (const n of npcs) {  // hostiles stand out
+      ctx.fillStyle = (n.kind === "brigand" || n.kind === "monster") ? "#e0563a" : "#8a93a0";
+      ctx.fillRect(mx + n.x / man.src_w * mmW - 1, my + n.y / man.src_h * mmH - 1, 2, 2);
+    }
     const dx = mx + px / man.src_w * mmW, dy = my + py / man.src_h * mmH;
     ctx.fillStyle = "#ff3b3b"; ctx.beginPath(); ctx.arc(dx, dy, 3.5, 0, 7); ctx.fill();
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.stroke();
@@ -204,12 +221,13 @@ function render() {
   const bk = Object.keys(builds).map((b, i) => `${i + 1}:${b}`).join(" ");
   const eraStr = worldYear == null ? "" :
     `${worldEra} age · ${worldYear < 0 ? -worldYear + " BC" : worldYear + " AD"}`;
+  const hpStr = myHp != null ? `hp <b>${myHp}/${myMaxHp}</b>   ` : ``;
   hud.innerHTML =
     `simhumanity — <b>real Earth</b>` + (spawned ? `   online <b>${others.length + 1}</b>` : ``) + `\n` +
     (spawned && eraStr ? `<b>${eraStr}</b>\n` : ``) +
     `lat ${lat.toFixed(2)}  lon ${lon.toFixed(2)}   tile ${px | 0},${py | 0}\n` +
-    (spawned ? `inv: <b>${inv}</b>\n` : ``) +
-    `<b>WASD</b> move · <b>Shift</b> run · <b>G</b> gather · <b>E</b> dig` +
+    (spawned ? `${hpStr}inv: <b>${inv}</b>\n` : ``) +
+    `<b>WASD</b> move · <b>Shift</b> run · <b>G</b> gather · <b>R</b> attack · <b>E</b> dig` +
     (bk ? ` · build <b>${bk}</b>` : ``) + ` · <b>+/-</b> zoom`;
 }
 
@@ -227,6 +245,7 @@ addEventListener("keydown", (e) => {
   if (!spawned || !ws || ws.readyState !== 1) return;
   if (k === "g" || k === " ") ws.send(JSON.stringify({ action: "gather" }));
   if (k === "e") ws.send(JSON.stringify({ action: "dig" }));
+  if (k === "r") ws.send(JSON.stringify({ action: "attack" }));
   const bk = Object.keys(builds);            // 1..N build the listed structures
   if (/^[1-9]$/.test(k) && bk[+k - 1])
     ws.send(JSON.stringify({ action: "build", kind: bk[+k - 1] }));
@@ -249,12 +268,19 @@ function connectWorld(city) {  // multiplayer presence over /world/ws
       myPid = m.pid; builds = m.builds || {};
       ws.send(JSON.stringify({ action: "spawn", x: Math.round(px), y: Math.round(py), city }));
     } else if (m.type === "presence") {
-      others = (m.players || []).filter((p) => p.pid !== myPid);
+      const ps = m.players || [];
+      others = ps.filter((p) => p.pid !== myPid);
+      const me = ps.find((p) => p.pid === myPid);
+      if (me) { myHp = me.hp; myMaxHp = me.max_hp; }
       structures = m.structures || [];
       ruins = m.ruins || [];
+      npcs = m.npcs || [];
       worldYear = m.year; worldEra = m.era;
     } else if (m.type === "inv") {
       myInv = m.inv || {};
+      if (m.hp != null) { myHp = m.hp; myMaxHp = m.max_hp; }
+    } else if (m.type === "respawn") {
+      px = m.x; py = m.y; myHp = m.hp; toast("You were slain — back to your city.");
     } else if (m.type === "log") {
       toast(m.text);
     }

@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -98,10 +99,26 @@ async def _build_terrain() -> None:
 
 
 async def _world_loop() -> None:
-    """Broadcast world-map player presence to its clients at ~8 Hz."""
+    """Tick the world (era clock + NPCs) and broadcast presence at ~8 Hz."""
+    last = time.monotonic()
     while True:
         await asyncio.sleep(0.125)
-        world_game.tick()  # advance the era clock; decay prior-era builds to ruins
+        now = time.monotonic()
+        dt, last = now - last, now
+        world_game.tick(dt, world_terrain)
+        if world_game.events:  # per-player notices (e.g. respawn on death)
+            pid_ws = {p: w for w, p in _world_clients.items()}
+            for ev in world_game.events:
+                w = pid_ws.get(ev["pid"])
+                if w is None:
+                    continue
+                with contextlib.suppress(Exception):
+                    if ev["kind"] == "respawn":
+                        await w.send_text(json.dumps({"type": "respawn", "x": ev["x"],
+                            "y": ev["y"], "hp": ev["hp"]}))
+                        await w.send_text(json.dumps({"type": "log",
+                            "text": "You were slain — back to your city."}))
+            world_game.events.clear()
         if not _world_clients:
             continue
         msg = json.dumps({"type": "presence", **world_game.snapshot()})
@@ -389,7 +406,8 @@ async def world_spawns(year: int = -2000) -> dict:
 async def _send_inv(ws: WebSocket, pid: str) -> None:
     p = world_game.players.get(pid)
     if p is not None:
-        await ws.send_text(json.dumps({"type": "inv", "inv": p.inv}))
+        await ws.send_text(json.dumps({"type": "inv", "inv": p.inv,
+                                       "hp": p.hp, "max_hp": p.max_hp}))
 
 
 @app.websocket("/world/ws")
@@ -432,6 +450,16 @@ async def world_ws(ws: WebSocket) -> None:
                 await ws.send_text(json.dumps({"type": "log",
                     "text": note.get(r, r) if r else "Nothing buried here."}))
                 await _send_inv(ws, pid)
+            elif action == "attack":
+                r = world_game.attack(pid)
+                if r:
+                    kind = r.split(":")[1]
+                    await ws.send_text(json.dumps({"type": "log",
+                        "text": f"You slay the {kind}!" if r.startswith("killed")
+                        else f"You strike the {kind}."}))
+                    await _send_inv(ws, pid)
+                else:
+                    await ws.send_text(json.dumps({"type": "log", "text": "Nothing in reach."}))
     except WebSocketDisconnect:
         pass
     finally:
