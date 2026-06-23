@@ -17,6 +17,7 @@ let px = 0, py = 0;     // player position in global tiles (float, for smooth mo
 const chunks = new Map(); // "c_r" -> {img, loaded, missing}
 const keys = new Set();
 let last = 0;
+const minimap = new Image(); minimap.src = "/static/minimap.jpg"; // whole-Earth overview
 
 function resize() { canvas.width = innerWidth; canvas.height = innerHeight; }
 addEventListener("resize", resize); resize();
@@ -40,7 +41,7 @@ function ensureChunk(c, r) {
   const e = { img, loaded: false, missing: false };
   img.onload = () => { e.loaded = true; };
   img.onerror = () => { e.missing = true; }; // region not tiled yet
-  img.src = `/tiles/c${c}_r${r}.${man.ext}`;
+  img.src = `/tiles/c${c}_r${r}.${man.ext}?v=${man.version}`;
   chunks.set(k, e);
 }
 
@@ -72,7 +73,9 @@ function render() {
   ctx.fillStyle = "#05070d";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   const cp = man.chunk_px;
-  const offX = canvas.width / 2 - px * TILE, offY = canvas.height / 2 - py * TILE;
+  // snap the camera to whole pixels so adjacent chunks share an exact edge
+  // (fractional offsets leave hairline seams between tiles).
+  const offX = Math.round(canvas.width / 2 - px * TILE), offY = Math.round(canvas.height / 2 - py * TILE);
   const v = viewRect();
   for (let r = Math.floor(v.y0 / cp); r <= Math.floor(v.y1 / cp); r++) {
     for (let c = Math.floor(v.x0 / cp); c <= Math.floor(v.x1 / cp); c++) {
@@ -92,6 +95,18 @@ function render() {
   ctx.fillRect(cx - TILE / 2, cy - TILE / 2, TILE, TILE);
   ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
   ctx.strokeRect(cx - TILE / 2, cy - TILE / 2, TILE, TILE);
+
+  // minimap (whole Earth) — orientation; toggle smoothing on for the downscale
+  if (minimap.complete && minimap.width) {
+    const mmW = 340, mmH = 170, mx = canvas.width - mmW - 12, my = canvas.height - mmH - 12;
+    ctx.imageSmoothingEnabled = true;
+    ctx.globalAlpha = 0.92; ctx.drawImage(minimap, mx, my, mmW, mmH); ctx.globalAlpha = 1;
+    ctx.imageSmoothingEnabled = false;
+    ctx.strokeStyle = "#39405a"; ctx.lineWidth = 1; ctx.strokeRect(mx + 0.5, my + 0.5, mmW, mmH);
+    const dx = mx + px / man.src_w * mmW, dy = my + py / man.src_h * mmH;
+    ctx.fillStyle = "#ff3b3b"; ctx.beginPath(); ctx.arc(dx, dy, 3.5, 0, 7); ctx.fill();
+    ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.stroke();
+  }
 
   const [lon, lat] = tileToLonLat(px, py);
   hud.innerHTML =
@@ -114,7 +129,7 @@ addEventListener("keydown", (e) => {
 });
 addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
 
-fetch("/tiles/manifest.json").then((r) => r.json()).then((m) => {
+fetch("/tiles/manifest.json", { cache: "no-store" }).then((r) => r.json()).then((m) => {
   man = m;
   [px, py] = lonlatToTile(45.6, 31.3); // spawn: Uruk, Sumer — the first cities
   requestAnimationFrame(frame);

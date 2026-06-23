@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 from PIL import Image
@@ -46,6 +47,7 @@ def _write_manifest(W: int, H: int, chunk: int, cols: int, rows: int,
                     n: int, ext: str, source: str) -> None:
     (OUT / "manifest.json").write_text(json.dumps({
         "source": source,
+        "version": int(time.time()),            # cache-buster for re-tiled chunks
         "src_w": W, "src_h": H,                 # == world size in game tiles
         "chunk_px": chunk, "cols": cols, "rows": rows, "count": n,
         "ext": ext,
