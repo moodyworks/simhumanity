@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 Image.MAX_IMAGE_PIXELS = None  # the source exceeds PIL's decompression-bomb guard
 
@@ -111,6 +111,33 @@ def composite_sea(im: Image.Image, topo_path: Path, bath_path: Path,
     return im
 
 
+def draw_rivers(im: Image.Image, features: list, x_off: int, y_off: int,
+                world_w: int, world_h: int, color=(60, 120, 168)) -> Image.Image:
+    """Draw Natural Earth river/lake centerlines onto a quadrant tile. Each vertex
+    is equirectangular lon/lat -> global pixel -> local tile pixel; PIL clips lines
+    that run off the tile. Major rivers (low scalerank) are drawn a touch wider."""
+    draw = ImageDraw.Draw(im)
+    W, H = im.size
+
+    def proj(lon, lat):
+        return ((lon + 180.0) / 360.0 * world_w - x_off,
+                (90.0 - lat) / 180.0 * world_h - y_off)
+
+    for feat in features:
+        sr = feat["properties"].get("scalerank")
+        width = 2 if (sr is not None and sr <= 4) else 1
+        geom = feat["geometry"]
+        segs = (geom["coordinates"] if geom["type"] == "MultiLineString"
+                else [geom["coordinates"]])
+        for seg in segs:
+            pts = [proj(c[0], c[1]) for c in seg]
+            if all(x < -8 or x > W + 8 or y < -8 or y > H + 8 for x, y in pts):
+                continue  # wholly off this tile
+            if len(pts) >= 2:
+                draw.line(pts, fill=color, width=width, joint="curve")
+    return im
+
+
 def _save_kw(ext: str) -> dict:
     return {"quality": 92} if ext in ("jpg", "jpeg") else {}
 
@@ -171,6 +198,10 @@ def tile_nasa(src_dir: Path, chunk: int, ext: str, only: str | None = None) -> N
     cols, rows = len(NASA_COLS) * cpt, len(NASA_ROWS) * cpt
     W, H = len(NASA_COLS) * s, len(NASA_ROWS) * s
     OUT.mkdir(exist_ok=True)
+    rivers = None
+    rv = src_dir.parent / "rivers.geojson"
+    if CRISP and rv.exists():
+        rivers = json.loads(rv.read_text())["features"]
     kw, n = _save_kw(ext), 0
     for ri, rdig in enumerate(NASA_ROWS):
         for ci, cl in enumerate(NASA_COLS):
@@ -181,6 +212,8 @@ def tile_nasa(src_dir: Path, chunk: int, ext: str, only: str | None = None) -> N
                 tp = _find(src_dir.parent / "topo", cl + rdig)
                 bp = _find(src_dir.parent / "bath", cl + rdig)
                 composite_sea(im, tp, bp) if (tp and bp) else crisp_water(im)
+                if rivers:
+                    draw_rivers(im, rivers, ci * s, ri * s, W, H)
             for lr in range(cpt):
                 for lc in range(cpt):
                     box = (lc * chunk, lr * chunk, (lc + 1) * chunk, (lr + 1) * chunk)
