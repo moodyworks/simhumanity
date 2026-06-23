@@ -300,6 +300,15 @@ For the **real world map** (Roadmap), bake accurate coordinates in from the star
 
 ## Changelog
 
+- **2026-06-23 (i)** — **Living history + richer resources on the world.** The real
+  **cities** (Athens, Rome, Carthage, Memphis…) now **rise and fall on the map** on
+  their historical timeline — drawn sized hamlet→metropolis from the era clock —
+  and the famous **ancient sites** (Göbekli Tepe, Jericho, Troy…) appear
+  **date-gated** once founded (snapshot `cities`/`sites`, reusing `CITIES`/`city_stage`
+  + `SITES`/`founded_year`). **Resources** enriched: **fish** (sail out to water),
+  **ore** (high peaks), plus stone/wood/food by biome. Both show on the minimap.
+  Remaining test-map extras: fog-of-war, weapons/armour, relics/plans, site
+  excavation quizzes, quests, sea monsters, debug tools.
 - **2026-06-23 (h)** — **Trading + Myth Engine + boats — world-map parity reached.**
   **Trade (F)** sells your goods to a nearby merchant for **coin**. **Boats** are
   crafted (8 wood) and let you **cross water**. **Dig** now drives the **Myth

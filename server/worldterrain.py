@@ -68,8 +68,11 @@ class WorldTerrain:
             return None
         cx, cy = self._cell(x, y)
         if self.water[cy, cx]:
-            return None            # fish needs a boat (later)
-        if self.elev[cy, cx] > 120:
+            return "fish"          # sail out (needs a boat) and fish
+        e = self.elev[cy, cx]
+        if e > 170:
+            return "ore"           # high peaks — rare, valuable
+        if e > 110:
             return "stone"         # mountains
         if self.veg[cy, cx]:
             return "wood"          # forest / vegetation

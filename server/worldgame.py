@@ -13,6 +13,8 @@ import random
 import time
 from dataclasses import dataclass, field
 
+from .cities import CITIES, city_stage
+from .landmarks import SITES, founded_year
 from .world import ERA_DATES, ERA_ORDER
 
 # NPCs spawn around players (the world is too big to simulate globally).
@@ -48,7 +50,7 @@ BUILDS: dict[str, dict[str, int]] = {
     "granary": {"wood": 4, "food": 3},
     "boat": {"wood": 8},
 }
-PRICES = {"wood": 2, "stone": 3, "food": 1, "artifact": 25}  # a merchant buys these
+PRICES = {"wood": 2, "stone": 3, "food": 1, "fish": 2, "ore": 8, "artifact": 25}
 TRADE_RANGE = 4.0
 
 
@@ -283,6 +285,7 @@ class WorldGame:
         return kind
 
     def snapshot(self) -> dict:
+        yr = self.year
         return {
             "players": [{"pid": p.pid, "name": p.name, "x": round(p.x, 1),
                          "y": round(p.y, 1), "city": p.city, "hp": p.hp, "max_hp": p.max_hp}
@@ -293,6 +296,12 @@ class WorldGame:
                       for (x, y), r in self.ruins.items()],
             "npcs": [{"id": n.nid, "kind": n.kind, "x": round(n.x, 1), "y": round(n.y, 1),
                       "hp": n.hp} for n in self.npcs.values()],
-            "year": self.year,
+            # real cities rising/falling on their timeline, and the famous ancient
+            # sites once they've been founded — the world's living history
+            "cities": [{"name": c["name"], "lon": c["lon"], "lat": c["lat"], "stage": st}
+                       for c in CITIES if (st := city_stage(c["timeline"], yr)) > 0],
+            "sites": [{"name": s["name"], "lon": s["lon"], "lat": s["lat"]}
+                      for s in SITES if yr >= founded_year(s["era"])],
+            "year": yr,
             "era": self.era_name(),
         }

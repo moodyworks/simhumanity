@@ -24,6 +24,7 @@ let ws = null, myPid = null, others = [], lastSent = 0;  // multiplayer presence
 let builds = {}, myInv = {}, structures = [], ruins = []; // gather / build / dig state
 let worldYear = null, worldEra = "";                     // era clock
 let npcs = [], myHp = null, myMaxHp = null;              // NPCs + combat
+let cities = [], sites = [];                            // historical cities + ancient sites
 const terrainCache = new Map();                          // chunk -> ImageData (land/water)
 let toastT = 0;
 function toast(text) {
@@ -141,6 +142,32 @@ function render() {
                     offX + ix0 * TILE, offY + iy0 * TILE, (ix1 - ix0) * TILE, (iy1 - iy0) * TILE);
     }
   }
+  // ancient sites (date-gated) — gold diamonds
+  for (const s of sites) {
+    const t = lonlatToTile(s.lon, s.lat); let ox = t[0]; const dd = ox - px;
+    if (dd > man.src_w / 2) ox -= man.src_w; else if (dd < -man.src_w / 2) ox += man.src_w;
+    const sx = offX + ox * TILE, sy = offY + t[1] * TILE, r = TILE * 0.6;
+    if (sx < -60 || sy < -60 || sx > canvas.width + 60 || sy > canvas.height + 60) continue;
+    ctx.fillStyle = "#ffe08a"; ctx.strokeStyle = "#000"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(sx, sy - r); ctx.lineTo(sx + r, sy);
+    ctx.lineTo(sx, sy + r); ctx.lineTo(sx - r, sy); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#ffe08a"; ctx.font = "11px ui-monospace, monospace"; ctx.textAlign = "center";
+    ctx.fillText(s.name, sx, sy - r - 3); ctx.textAlign = "left";
+  }
+  // historical cities, sized by their current era stage
+  const sizeName = ["", "hamlet", "town", "city", "metropolis"];
+  for (const c of cities) {
+    const t = lonlatToTile(c.lon, c.lat); let ox = t[0]; const dd = ox - px;
+    if (dd > man.src_w / 2) ox -= man.src_w; else if (dd < -man.src_w / 2) ox += man.src_w;
+    const sx = offX + ox * TILE, sy = offY + t[1] * TILE;
+    if (sx < -80 || sy < -80 || sx > canvas.width + 80 || sy > canvas.height + 80) continue;
+    const rad = TILE * (0.45 + 0.22 * c.stage);
+    ctx.fillStyle = "#e8d3a0"; ctx.strokeStyle = "#5a4424"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(sx, sy, rad, 0, 7); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.font = "12px ui-monospace, monospace"; ctx.textAlign = "center";
+    ctx.fillText(`${c.name} · ${sizeName[c.stage]}`, sx, sy - rad - 4); ctx.textAlign = "left";
+  }
+
   // built structures
   for (const s of structures) {
     let ox = s.x; const d = ox - px;
@@ -212,6 +239,11 @@ function render() {
       ctx.fillStyle = (n.kind === "brigand" || n.kind === "monster") ? "#e0563a" : "#8a93a0";
       ctx.fillRect(mx + n.x / man.src_w * mmW - 1, my + n.y / man.src_h * mmH - 1, 2, 2);
     }
+    for (const c of cities) {  // civilization on the overview
+      const t = lonlatToTile(c.lon, c.lat);
+      ctx.fillStyle = "#e8d3a0";
+      ctx.fillRect(mx + t[0] / man.src_w * mmW - 1, my + t[1] / man.src_h * mmH - 1, 2, 2);
+    }
     const dx = mx + px / man.src_w * mmW, dy = my + py / man.src_h * mmH;
     ctx.fillStyle = "#ff3b3b"; ctx.beginPath(); ctx.arc(dx, dy, 3.5, 0, 7); ctx.fill();
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.stroke();
@@ -277,6 +309,8 @@ function connectWorld(city) {  // multiplayer presence over /world/ws
       structures = m.structures || [];
       ruins = m.ruins || [];
       npcs = m.npcs || [];
+      cities = m.cities || [];
+      sites = m.sites || [];
       worldYear = m.year; worldEra = m.era;
     } else if (m.type === "inv") {
       myInv = m.inv || {};
