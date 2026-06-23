@@ -8,6 +8,10 @@ __pycache__/
 .DS_Store
 # Runtime debug placements from the in-game place tool.
 place_overrides.json
+# Large world-map source + generated chunks (regenerate with tools/tile_world.py)
+world_src.jpg
+world.2004*.jpg
+world_tiles/
 # Regenerable build/verification artifacts (run tools/build_map.py /
 # tools/preview_landmarks.py). The baked grid server/med_map.txt IS committed;
 # these preview images are not.
