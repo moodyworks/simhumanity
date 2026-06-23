@@ -52,7 +52,7 @@ function viewRect() { // visible area in global tiles
 
 function update(dt) {
   // movement (Shift = run); realistic scale, so this is "game-fast" for the demo
-  const run = keys.has("shift") ? 6 : 1;
+  const run = keys.has("shift") ? 60 : 1; // 10x run, for fast land-verification
   const sp = 14 * run * dt; // tiles/sec
   let dx = 0, dy = 0;
   if (keys.has("w") || keys.has("arrowup")) dy -= 1;

@@ -42,20 +42,38 @@ NASA_ROWS = "12"    # latitude, north (1) -> south (2)
 CRISP = os.environ.get("CRISP", "1") != "0"  # repaint seas for a defined coastline
 
 
-def crisp_water(im: Image.Image, band: int = 2048) -> Image.Image:
-    """Give the anti-aliased coastline a defined edge: classify ocean-blue pixels
-    and repaint them flat sea colours, so land and water separate cleanly. Land is
-    left photographic. Done in horizontal bands to bound memory on huge tiles."""
+def _dilate(mask: np.ndarray, it: int) -> np.ndarray:
+    """Binary dilation by `it` px (4-connectivity), numpy-only."""
+    m = mask
+    for _ in range(it):
+        d = m.copy()
+        d[1:, :] |= m[:-1, :]; d[:-1, :] |= m[1:, :]
+        d[:, 1:] |= m[:, :-1]; d[:, :-1] |= m[:, 1:]
+        m = d
+    return m
+
+
+def crisp_water(im: Image.Image, band: int = 2048, pad: int = 3) -> Image.Image:
+    """Give the anti-aliased coastline a defined edge: classify the (near-black)
+    ocean, grab the dark anti-aliased fringe just around it, and repaint the lot a
+    subtly depth-shaded sea colour — land stays photographic. Banded with overlap
+    so the fringe grab leaves no seams, bounding memory on huge tiles."""
+    base = np.array([52, 112, 162], np.float32)  # main sea colour
     W, H = im.size
     for y0 in range(0, H, band):
-        a = np.asarray(im.crop((0, y0, W, min(y0 + band, H))))
+        y1 = min(y0 + band, H)
+        ey0, ey1 = max(0, y0 - pad), min(H, y1 + pad)  # extended for the dilation
+        a = np.asarray(im.crop((0, ey0, W, ey1)))
         R, G, B = (a[:, :, i].astype(np.int16) for i in range(3))
         s = R + G + B
-        water = (s < 55) & (B >= R)  # this Blue Marble renders oceans near-black
+        sea = (s < 55) & (B >= R)              # near-black open water
+        water = sea | (_dilate(sea, pad) & (s < 100))  # + dark anti-aliased coast
+        depth = np.clip((55 - s) / 55.0, 0, 1)[..., None]       # 0 shallow .. 1 deep
+        shade = (base * (1.0 - 0.18 * depth)).astype(np.uint8)  # deeper = only a touch darker
         out = a.copy()
-        out[water & (s < 18)] = (24, 64, 120)     # deep
-        out[water & (s >= 18)] = (52, 112, 162)   # coastal / shallow
-        im.paste(Image.fromarray(out, "RGB"), (0, y0))
+        out[water] = shade[water]
+        core = out[y0 - ey0: y0 - ey0 + (y1 - y0)]  # drop the overlap pad
+        im.paste(Image.fromarray(core, "RGB"), (0, y0))
     return im
 
 
