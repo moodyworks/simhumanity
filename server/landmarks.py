@@ -10,6 +10,7 @@ Pure data + math — no image/Pillow dependency, safe to import at runtime.
 from __future__ import annotations
 
 import math
+import re
 
 # Geographic bounds of medsmall.jpg, in degrees. Calibrated visually so the
 # graticule and known features (Gibraltar, the Nile delta, the Bosphorus,
@@ -45,13 +46,12 @@ SITES: list[dict] = [
      "note": "An ancient Phoenician port, one of the oldest cities on Earth; our "
              "word 'Bible' descends from its name."},
     {"name": "Memphis & Giza", "lon": 31.13, "lat": 29.98, "era": "c. 2600 BC",
-     "tile": (252, 162),  # on the Egyptian mainland (its lon/lat lands at sea)
+     "tile": (252, 173),  # inland on the Egyptian mainland (south of the delta)
      "note": "The capital of the Old Kingdom and its pyramids — the last "
              "surviving wonder of the ancient world."},
     {"name": "Carthage", "lon": 10.32, "lat": 36.85, "era": "c. 814 BC",
-     # Its computed point falls in the Sicilian Strait; pin to the Cap Bon
-     # peninsula of NE Tunisia (verified against the map grid).
-     "tile": (110, 84),
+     # NW Africa is fragmented on this map; pin to the Tunisia landmass.
+     "tile": (110, 92),
      "note": "The Phoenician sea-empire that rose to rival Rome across the "
              "western Mediterranean."},
     {"name": "Ġgantija", "lon": 14.27, "lat": 36.05, "era": "c. 3600 BC",
@@ -70,6 +70,16 @@ def to_tile(lon: float, lat: float, width: int, height: int) -> tuple[int, int]:
     x = (lon - LON_W) / (LON_E - LON_W) * (width - 1)
     y = (LAT_N - lat) / (LAT_N - LAT_S) * (height - 1)
     return round(x), round(y)
+
+
+def founded_year(era: str) -> int:
+    """Parse a site's 'era' string (e.g. 'c. 2600 BC') into a numeric year so the
+    site only exists in-world from then on."""
+    m = re.search(r"(\d+)\s*(BC|AD)", era)
+    if not m:
+        return -50000
+    n = int(m.group(1))
+    return -n if m.group(2) == "BC" else n
 
 
 def km_per_tile(width: int, height: int) -> float:

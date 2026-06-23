@@ -681,6 +681,8 @@ function draw() {
     cityTiles.add(c.x + "," + c.y);
   }
   for (const lm of landmarks) {
+    // A site doesn't exist before it was built.
+    if (state && lm.founded !== undefined && state.year < lm.founded) continue;
     const px = offX + lm.x * TILE;
     const py = offY + lm.y * TILE;
     if (px < -60 || py < -20 || px > canvas.width + 60 || py > canvas.height)

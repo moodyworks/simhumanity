@@ -16,7 +16,7 @@ from .cities import CITIES, city_stage
 from .entities import (Entity, make_brigand, make_merchant, make_monster,
                        make_wanderer)
 from .eventlog import EventLog
-from .landmarks import SITES, site_questions, to_tile
+from .landmarks import SITES, founded_year, site_questions, to_tile
 from .mapdata import LEGEND, build_terrain
 from .plans import (COASTAL_PLANS, PLAN_PRICE, PLANS, RUIN_TEACHABLE,
                     SITE_TEACHES, STARTING_PLANS, plan_public)
@@ -132,10 +132,12 @@ class Landmark:
     y: int
     era: str
     note: str
+    founded: int = -50000  # year the site exists from (hidden before then)
     found_by: set = field(default_factory=set)  # pids who've excavated it
 
     def to_public(self) -> dict:
-        return {"name": self.name, "x": self.x, "y": self.y, "era": self.era}
+        return {"name": self.name, "x": self.x, "y": self.y, "era": self.era,
+                "founded": self.founded}
 
 
 @dataclass
@@ -331,8 +333,8 @@ class World:
                 if not bumped or bumped in self.landmark_at:
                     continue
                 x, y = bumped
-            lm = Landmark(name=site["name"], x=x, y=y,
-                          era=site["era"], note=site["note"])
+            lm = Landmark(name=site["name"], x=x, y=y, era=site["era"],
+                          note=site["note"], founded=founded_year(site["era"]))
             self.landmarks.append(lm)
             self.landmark_at[(x, y)] = lm
             self.tiles[y][x].item = None  # keep the site tile visually clean
@@ -374,6 +376,10 @@ class World:
         lm = self.landmark_at.get((p.x, p.y))
         if not lm:
             return None
+        if self.era_year() < lm.founded:
+            return {"name": lm.name, "x": p.x, "y": p.y, "done": True,
+                    "questions": [], "note": "There is nothing here yet — this "
+                    "site has not been built in this age.", "era": lm.era}
         base = {"name": lm.name, "era": lm.era, "note": lm.note,
                 "x": p.x, "y": p.y}
         if pid in lm.found_by:  # already studied — just re-read the placard

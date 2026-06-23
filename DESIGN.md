@@ -296,6 +296,12 @@ For the **real world map** (Roadmap), bake accurate coordinates in from the star
 
 ## Changelog
 
+- **2026-06-22 (latest+2)** — Ancient sites are **date-gated** (hidden/undiggable
+  before their founding year — e.g. Memphis & Giza won't appear in 4500 BCE);
+  best-effort re-placement of Carthage (Tunisia landmass) and the Egypt cluster.
+  Known limitation: this stylized map's coastline is fragmented and not a true
+  projection, so precise lon/lat placement is unreliable — see "Placing real
+  locations". Server-orphan pileup fixed (run.sh stops the old server first).
 - **2026-06-22 (latest+1)** — Debug mode (O): reveal-all + click the age to jump
   to any year (assets repopulate); stone now plentiful near mountains (rocky
   foothills); world also resets when the last player leaves (robust fresh games);
