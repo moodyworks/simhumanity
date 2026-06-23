@@ -22,11 +22,26 @@ from .landmarks import km_per_tile
 from .quests import build_claims
 from .settings import SETTINGS
 from .world import World
-from .worldgame import WorldGame
+from .worldgame import BUILDS, WorldGame
+from .worldterrain import WorldTerrain
 
 CLIENT_DIR = Path(__file__).resolve().parent.parent / "client"
 WORLD_TILES_DIR = Path(__file__).resolve().parent.parent / "world_tiles"
 WORLD_TILES_DIR.mkdir(exist_ok=True)  # so the static mount never fails on a fresh checkout
+_HIGHRES = Path(__file__).resolve().parent.parent / "highres"
+
+
+def _world_dims() -> tuple[int, int]:
+    try:
+        m = json.loads((WORLD_TILES_DIR / "manifest.json").read_text())
+        return int(m["src_w"]), int(m["src_h"])
+    except Exception:
+        return 86400, 43200
+
+
+WORLD_W, WORLD_H = _world_dims()
+world_terrain = WorldTerrain(WORLD_W, WORLD_H, str(_HIGHRES / "topo"),
+                             str(_HIGHRES / "world.200408.3x5400x2700.jpg"))
 
 # For now, every server (re)start is a completely fresh game: wipe the persisted
 # event log so nothing carries over a hard reset. (Real persistence is future.)
@@ -62,6 +77,7 @@ _world_clients: dict[WebSocket, str] = {}  # ws -> pid
 async def lifespan(app: FastAPI):
     task = asyncio.create_task(_tick_loop())
     wtask = asyncio.create_task(_world_loop())
+    asyncio.create_task(_build_terrain())  # background; flips world_terrain.ready
     try:
         yield
     finally:
@@ -70,6 +86,15 @@ async def lifespan(app: FastAPI):
             with contextlib.suppress(asyncio.CancelledError):
                 await t
         log.close()
+
+
+async def _build_terrain() -> None:
+    """Build the coarse world terrain off-thread so startup isn't blocked. If the
+    GEBCO/Blue Marble sources are absent, gather/build just stay unavailable."""
+    try:
+        await asyncio.to_thread(world_terrain.build)
+    except Exception as exc:
+        print("world terrain unavailable:", exc)
 
 
 async def _world_loop() -> None:
@@ -360,13 +385,21 @@ async def world_spawns(year: int = -2000) -> dict:
     return {"year": year, "spawns": out}
 
 
+async def _send_inv(ws: WebSocket, pid: str) -> None:
+    p = world_game.players.get(pid)
+    if p is not None:
+        await ws.send_text(json.dumps({"type": "inv", "inv": p.inv}))
+
+
 @app.websocket("/world/ws")
 async def world_ws(ws: WebSocket) -> None:
-    """World-map multiplayer: the client spawns and streams its position; the
-    server tracks presence and (via _world_loop) broadcasts everyone's positions."""
+    """World-map multiplayer: the client spawns, streams its position, and gathers
+    / builds; the server is authoritative for inventory and structures, and
+    (via _world_loop) broadcasts everyone's positions + structures."""
     await ws.accept()
     pid = uuid.uuid4().hex[:8]
-    await ws.send_text(json.dumps({"type": "welcome", "pid": pid}))
+    await ws.send_text(json.dumps({"type": "welcome", "pid": pid,
+                                   "builds": BUILDS}))
     _world_clients[ws] = pid
     try:
         while True:
@@ -376,8 +409,21 @@ async def world_ws(ws: WebSocket) -> None:
                 name = msg.get("name") or f"Wanderer-{pid[:4]}"
                 world_game.join(pid, name, msg.get("x", 0), msg.get("y", 0),
                                 msg.get("city", ""))
+                await _send_inv(ws, pid)
             elif action == "move":
                 world_game.move(pid, msg.get("x", 0), msg.get("y", 0))
+            elif action == "gather":
+                res = world_game.gather(pid, world_terrain)
+                await ws.send_text(json.dumps({"type": "log",
+                    "text": f"Gathered {res}." if res else "Nothing to gather here."}))
+                await _send_inv(ws, pid)
+            elif action == "build":
+                r = world_game.build(pid, str(msg.get("kind", "")), world_terrain)
+                note = {"water": "Can't build on water.", "occupied": "Something's already here.",
+                        "cost": "Not enough materials.", "bad": "Unknown structure."}
+                await ws.send_text(json.dumps({"type": "log",
+                    "text": f"Built a {r}." if r in BUILDS else note.get(r, "Can't build.")}))
+                await _send_inv(ws, pid)
     except WebSocketDisconnect:
         pass
     finally:

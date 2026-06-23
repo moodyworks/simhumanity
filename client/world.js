@@ -21,6 +21,14 @@ const minimap = new Image(); minimap.src = "/static/minimap.jpg"; // whole-Earth
 let spawned = false;       // movement is disabled until the player picks a spawn city
 let spawnCities = [];      // cities of the age — the spawn options
 let ws = null, myPid = null, others = [], lastSent = 0;  // multiplayer presence
+let builds = {}, myInv = {}, structures = [];            // gather / build state
+const terrainCache = new Map();                          // chunk -> ImageData (land/water)
+let toastT = 0;
+function toast(text) {
+  const el = document.getElementById("log");
+  el.textContent = text; el.style.opacity = "1";
+  clearTimeout(toastT); toastT = setTimeout(() => { el.style.opacity = "0"; }, 2500);
+}
 
 function resize() { canvas.width = innerWidth; canvas.height = innerHeight; }
 addEventListener("resize", resize); resize();
@@ -49,6 +57,33 @@ function ensureChunk(c, r) {
   chunks.set(k, e);
 }
 
+function chunkData(ac, r) {  // cache a chunk's pixels so we can read land/water
+  const k = ac + "_" + r;
+  if (terrainCache.has(k)) return terrainCache.get(k);
+  const e = chunks.get(k);
+  if (!e || !e.loaded) return null;
+  const cv = document.createElement("canvas");
+  cv.width = e.img.width; cv.height = e.img.height;
+  const cx = cv.getContext("2d", { willReadFrequently: true });
+  cx.drawImage(e.img, 0, 0);
+  const d = cx.getImageData(0, 0, cv.width, cv.height);
+  terrainCache.set(k, d);
+  return d;
+}
+
+function isWaterTile(tx, ty) {  // water == the rendered sea-blue (matches the map)
+  if (!man) return false;
+  const cp = man.chunk_px, r = Math.floor(ty / cp);
+  if (r < 0 || r >= man.rows) return false;
+  const ac = ((Math.floor(tx / cp) % man.cols) + man.cols) % man.cols;
+  const d = chunkData(ac, r);
+  if (!d) return false;  // not loaded yet — don't block
+  const lx = ((Math.floor(tx) % cp) + cp) % cp, ly = Math.floor(ty) - r * cp;
+  if (lx >= d.width || ly >= d.height) return false;
+  const i = (ly * d.width + lx) * 4, R = d.data[i], G = d.data[i + 1], B = d.data[i + 2];
+  return B > R + 20 && B > G && B > 100;
+}
+
 function viewRect() { // visible area in global tiles
   const hw = canvas.width / 2 / TILE, hh = canvas.height / 2 / TILE;
   return { x0: px - hw, y0: py - hh, x1: px + hw, y1: py + hh };
@@ -62,9 +97,13 @@ function update(dt) {
     if (keys.has("s") || keys.has("arrowdown")) dy += 1;
     if (keys.has("a") || keys.has("arrowleft")) dx -= 1;
     if (keys.has("d") || keys.has("arrowright")) dx += 1;
-    if (dx || dy) { const m = Math.hypot(dx, dy) || 1; px += dx / m * sp; py += dy / m * sp; }
-    px = ((px % man.src_w) + man.src_w) % man.src_w;  // wrap around the globe E/W
-    py = Math.max(0, Math.min(man.src_h - 1, py));     // poles are a wall N/S
+    if (dx || dy) {
+      const m = Math.hypot(dx, dy) || 1;
+      let nx = ((px + dx / m * sp) % man.src_w + man.src_w) % man.src_w;  // wrap E/W
+      let ny = Math.max(0, Math.min(man.src_h - 1, py + dy / m * sp));    // poles = wall
+      if (!isWaterTile(nx, ny)) { px = nx; py = ny; }       // no walking on water
+      else { if (!isWaterTile(nx, py)) px = nx; if (!isWaterTile(px, ny)) py = ny; }
+    }
   }
   if (spawned && ws && ws.readyState === 1 && performance.now() - lastSent > 150) {
     ws.send(JSON.stringify({ action: "move", x: Math.round(px), y: Math.round(py) }));
@@ -99,6 +138,16 @@ function render() {
                     offX + ix0 * TILE, offY + iy0 * TILE, (ix1 - ix0) * TILE, (iy1 - iy0) * TILE);
     }
   }
+  // built structures
+  for (const s of structures) {
+    let ox = s.x; const d = ox - px;
+    if (d > man.src_w / 2) ox -= man.src_w; else if (d < -man.src_w / 2) ox += man.src_w;
+    const sx = offX + ox * TILE, sy = offY + s.y * TILE;
+    if (sx < -TILE || sy < -TILE || sx > canvas.width || sy > canvas.height) continue;
+    ctx.fillStyle = "#caa472"; ctx.fillRect(sx - TILE / 2, sy - TILE / 2, TILE, TILE);
+    ctx.strokeStyle = "#3a2d18"; ctx.lineWidth = 2; ctx.strokeRect(sx - TILE / 2, sy - TILE / 2, TILE, TILE);
+  }
+
   // other players (multiplayer presence) — drawn at the nearest wrap of their x
   for (const p of others) {
     let ox = p.x; const d = ox - px;
@@ -140,10 +189,14 @@ function render() {
   }
 
   const [lon, lat] = tileToLonLat(px, py);
+  const inv = Object.entries(myInv).map(([k, v]) => `${k} ${v}`).join("  ") || "—";
+  const bk = Object.keys(builds).map((b, i) => `${i + 1}:${b}`).join(" ");
   hud.innerHTML =
     `simhumanity — <b>real Earth</b>` + (spawned ? `   online <b>${others.length + 1}</b>` : ``) + `\n` +
     `lat ${lat.toFixed(2)}  lon ${lon.toFixed(2)}   tile ${px | 0},${py | 0}\n` +
-    `zoom <b>${TILE}</b> px/tile   <b>WASD</b> move · <b>Shift</b> run · <b>+/-</b> zoom`;
+    (spawned ? `inv: <b>${inv}</b>\n` : ``) +
+    `<b>WASD</b> move · <b>Shift</b> run · <b>G</b> gather` +
+    (bk ? ` · build <b>${bk}</b>` : ``) + ` · <b>+/-</b> zoom`;
 }
 
 function frame(t) {
@@ -157,6 +210,11 @@ addEventListener("keydown", (e) => {
   if (k === "shift") keys.add("shift"); else keys.add(k);
   if (k === "+" || k === "=") TILE = Math.min(64, TILE + 4);
   if (k === "-" || k === "_") TILE = Math.max(2, TILE - 4);
+  if (!spawned || !ws || ws.readyState !== 1) return;
+  if (k === "g" || k === " ") ws.send(JSON.stringify({ action: "gather" }));
+  const bk = Object.keys(builds);            // 1..N build the listed structures
+  if (/^[1-9]$/.test(k) && bk[+k - 1])
+    ws.send(JSON.stringify({ action: "build", kind: bk[+k - 1] }));
 });
 addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
 
@@ -173,10 +231,15 @@ function connectWorld(city) {  // multiplayer presence over /world/ws
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
     if (m.type === "welcome") {
-      myPid = m.pid;
+      myPid = m.pid; builds = m.builds || {};
       ws.send(JSON.stringify({ action: "spawn", x: Math.round(px), y: Math.round(py), city }));
     } else if (m.type === "presence") {
       others = (m.players || []).filter((p) => p.pid !== myPid);
+      structures = m.structures || [];
+    } else if (m.type === "inv") {
+      myInv = m.inv || {};
+    } else if (m.type === "log") {
+      toast(m.text);
     }
   };
   ws.onclose = () => { ws = null; };

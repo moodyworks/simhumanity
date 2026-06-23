@@ -300,6 +300,14 @@ For the **real world map** (Roadmap), bake accurate coordinates in from the star
 
 ## Changelog
 
+- **2026-06-23 (e)** — **Land/water movement + gather/build on the world.** Server
+  terrain (`worldterrain.py`): land/water + a coarse biome from GEBCO topo + the
+  Blue Marble overview (8 km cells, water = sea-level fraction). You **can't walk
+  on water** (the client reads the rendered sea-blue; boats later). **Gather (G)**
+  yields wood (forest), stone (mountains) or food (plains) by biome; **build
+  (1/2/3)** places hut / cairn / granary — server-authoritative inventory +
+  **shared structures** (everyone sees them). Toward test-map parity, still to
+  port: eras/season clock, archaeology (dig), NPCs, combat, economy, Myth Engine.
 - **2026-06-23 (d)** — **World map becomes a multiplayer game (port begins).** Whole
   planet tiled (16,200 chunks). `/world` now: pick a **city of the age** to spawn
   (`/world/spawns?year=`), connect over **`/world/ws`**, and **see other players**
