@@ -410,6 +410,16 @@ async def _send_inv(ws: WebSocket, pid: str) -> None:
                                        "hp": p.hp, "max_hp": p.max_hp}))
 
 
+async def _mythologize(ws: WebSocket, key, builder: str, kind: str, era: str) -> None:
+    """Have the Myth Engine garble the true dig record into a legend, cache it on the
+    ruin (so later diggers get the myth), and whisper it to this digger."""
+    legend = await myth_engine.generate(builder=builder, structure_type=kind,
+                                        era_built=era, deeds=[{"kind": "build"}])
+    world_game.set_legend(key, legend)
+    with contextlib.suppress(Exception):
+        await ws.send_text(json.dumps({"type": "log", "text": "Legend: " + legend}))
+
+
 @app.websocket("/world/ws")
 async def world_ws(ws: WebSocket) -> None:
     """World-map multiplayer: the client spawns, streams its position, and gathers
@@ -445,11 +455,24 @@ async def world_ws(ws: WebSocket) -> None:
                 await _send_inv(ws, pid)
             elif action == "dig":
                 r = world_game.dig(pid)
-                note = {"nothing": "Nothing buried here.",
-                        "again": "You've already excavated this ruin."}
-                await ws.send_text(json.dumps({"type": "log",
-                    "text": note.get(r, r) if r else "Nothing buried here."}))
-                await _send_inv(ws, pid)
+                st = r.get("status")
+                if st in ("truth", "myth", "again"):
+                    await ws.send_text(json.dumps({"type": "log", "text": r["text"]}))
+                    await _send_inv(ws, pid)
+                    if st == "truth":  # spin the legend (DeepSeek), cache + echo it
+                        asyncio.create_task(_mythologize(ws, r["key"], r["builder"],
+                                                         r["kind"], r["era"]))
+                else:
+                    await ws.send_text(json.dumps({"type": "log", "text": "Nothing buried here."}))
+            elif action == "trade":
+                r = world_game.trade(pid)
+                if r.get("status") != "ok":
+                    await ws.send_text(json.dumps({"type": "log", "text": "No merchant nearby."}))
+                else:
+                    e = r["earned"]
+                    await ws.send_text(json.dumps({"type": "log",
+                        "text": f"Sold your goods for {e} coin." if e else "Nothing to sell."}))
+                    await _send_inv(ws, pid)
             elif action == "attack":
                 r = world_game.attack(pid)
                 if r:

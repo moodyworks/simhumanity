@@ -103,7 +103,8 @@ function update(dt) {
       const m = Math.hypot(dx, dy) || 1;
       let nx = ((px + dx / m * sp) % man.src_w + man.src_w) % man.src_w;  // wrap E/W
       let ny = Math.max(0, Math.min(man.src_h - 1, py + dy / m * sp));    // poles = wall
-      if (!isWaterTile(nx, ny)) { px = nx; py = ny; }       // no walking on water
+      const boat = (myInv.boat || 0) > 0;                   // a boat crosses water
+      if (boat || !isWaterTile(nx, ny)) { px = nx; py = ny; }
       else { if (!isWaterTile(nx, py)) px = nx; if (!isWaterTile(px, ny)) py = ny; }
     }
   }
@@ -227,7 +228,7 @@ function render() {
     (spawned && eraStr ? `<b>${eraStr}</b>\n` : ``) +
     `lat ${lat.toFixed(2)}  lon ${lon.toFixed(2)}   tile ${px | 0},${py | 0}\n` +
     (spawned ? `${hpStr}inv: <b>${inv}</b>\n` : ``) +
-    `<b>WASD</b> move · <b>Shift</b> run · <b>G</b> gather · <b>R</b> attack · <b>E</b> dig` +
+    `<b>WASD</b> move · <b>Shift</b> run · <b>G</b> gather · <b>R</b> attack · <b>E</b> dig · <b>F</b> trade` +
     (bk ? ` · build <b>${bk}</b>` : ``) + ` · <b>+/-</b> zoom`;
 }
 
@@ -246,6 +247,7 @@ addEventListener("keydown", (e) => {
   if (k === "g" || k === " ") ws.send(JSON.stringify({ action: "gather" }));
   if (k === "e") ws.send(JSON.stringify({ action: "dig" }));
   if (k === "r") ws.send(JSON.stringify({ action: "attack" }));
+  if (k === "f") ws.send(JSON.stringify({ action: "trade" }));
   const bk = Object.keys(builds);            // 1..N build the listed structures
   if (/^[1-9]$/.test(k) && bk[+k - 1])
     ws.send(JSON.stringify({ action: "build", kind: bk[+k - 1] }));

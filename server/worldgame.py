@@ -40,12 +40,16 @@ def era_index_for(year: int) -> int:
             return i
     return len(ERA_ORDER) - 1
 
-# Simple starter build set (the fuller plan/era system is ported later).
+# Simple starter build set (the fuller plan/era system is ported later). "boat"
+# is crafted to the inventory (it lets you cross water) rather than placed.
 BUILDS: dict[str, dict[str, int]] = {
     "hut": {"wood": 5},
     "cairn": {"stone": 5},
     "granary": {"wood": 4, "food": 3},
+    "boat": {"wood": 8},
 }
+PRICES = {"wood": 2, "stone": 3, "food": 1, "artifact": 25}  # a merchant buys these
+TRADE_RANGE = 4.0
 
 
 @dataclass
@@ -184,23 +188,52 @@ class WorldGame:
             return f"killed:{best.kind}"
         return f"hit:{best.kind}"
 
-    def dig(self, pid: str) -> str | None:
-        """Excavate a ruin under the player: recover its materials + an artifact and
-        reveal who built it (the true record, before the Myth Engine distorts it)."""
+    def dig(self, pid: str) -> dict:
+        """Excavate the ruin under the player: recover materials + an artifact. The
+        FIRST digger gets the true record (and the caller has the Myth Engine spin a
+        legend, stored on the ruin); later diggers get the distorted legend."""
         p = self.players.get(pid)
         if not p:
-            return None
-        ruin = self.ruins.get((round(p.x), round(p.y)))
+            return {"status": "none"}
+        key = (round(p.x), round(p.y))
+        ruin = self.ruins.get(key)
         if not ruin:
-            return "nothing"
+            return {"status": "nothing"}
         if pid in ruin["found_by"]:
-            return "again"
+            return {"status": "again",
+                    "text": ruin.get("legend") or "You've already excavated this ruin."}
         ruin["found_by"].add(pid)
         for k, v in BUILDS.get(ruin["kind"], {}).items():
             p.inv[k] = p.inv.get(k, 0) + v
         p.inv["artifact"] = p.inv.get("artifact", 0) + 1
-        return (f"You unearth a {ruin['kind']} raised by {ruin['builder']} in the "
-                f"{ERA_ORDER[ruin['era']]} age.")
+        if ruin.get("legend"):
+            return {"status": "myth", "text": ruin["legend"]}
+        era = ERA_ORDER[ruin["era"]]
+        return {"status": "truth", "key": key, "builder": ruin["builder"],
+                "kind": ruin["kind"], "era": era,
+                "text": (f"You unearth a {ruin['kind']} raised by {ruin['builder']} "
+                         f"in the {era} age — its legend now stirs.")}
+
+    def set_legend(self, key: tuple, legend: str) -> None:
+        ruin = self.ruins.get(key)
+        if ruin is not None:
+            ruin["legend"] = legend
+
+    def trade(self, pid: str) -> dict:
+        """Sell your sellable goods to the nearest merchant for coin."""
+        p = self.players.get(pid)
+        if not p:
+            return {"status": "none"}
+        merch = min((n for n in self.npcs.values() if n.kind == "merchant"
+                     and math.hypot(n.x - p.x, n.y - p.y) <= TRADE_RANGE),
+                    key=lambda n: math.hypot(n.x - p.x, n.y - p.y), default=None)
+        if merch is None:
+            return {"status": "none"}
+        earned = sum(p.inv.get(i, 0) * pr for i, pr in PRICES.items())
+        for i in PRICES:
+            p.inv[i] = 0
+        p.inv["coin"] = p.inv.get("coin", 0) + earned
+        return {"status": "ok", "earned": earned}
 
     def join(self, pid: str, name: str, x: float, y: float, city: str) -> None:
         self.players[pid] = WorldPlayer(pid, name, float(x), float(y), city,
@@ -231,13 +264,18 @@ class WorldGame:
         recipe = BUILDS.get(kind)
         if not p or not recipe:
             return "bad"
+        if any(p.inv.get(k, 0) < v for k, v in recipe.items()):
+            return "cost"
+        if kind == "boat":  # crafted to the inventory (lets you cross water)
+            for k, v in recipe.items():
+                p.inv[k] -= v
+            p.inv["boat"] = p.inv.get("boat", 0) + 1
+            return "boat"
         tx, ty = round(p.x), round(p.y)
         if terrain.is_water(tx, ty):
             return "water"
         if (tx, ty) in self.structures:
             return "occupied"
-        if any(p.inv.get(k, 0) < v for k, v in recipe.items()):
-            return "cost"
         for k, v in recipe.items():
             p.inv[k] -= v
         self.structures[(tx, ty)] = {"kind": kind, "pid": pid, "name": p.name,

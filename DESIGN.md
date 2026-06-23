@@ -300,6 +300,14 @@ For the **real world map** (Roadmap), bake accurate coordinates in from the star
 
 ## Changelog
 
+- **2026-06-23 (h)** — **Trading + Myth Engine + boats — world-map parity reached.**
+  **Trade (F)** sells your goods to a nearby merchant for **coin**. **Boats** are
+  crafted (8 wood) and let you **cross water**. **Dig** now drives the **Myth
+  Engine**: the *first* excavator gets the true record *and* the DeepSeek Historian
+  spins it into a distorted **legend** cached on the ruin — later diggers get the
+  myth, not the truth ("a hut raised by Bob" → "Bob the Sky-Father split the
+  mountains"). The real-Earth world map is now a full multiplayer game matching the
+  test map's systems. (Reuses `ai.MythEngine`; stub/DeepSeek/ollama providers.)
 - **2026-06-23 (g)** — **NPCs + combat on the world.** NPCs (wanderer / merchant /
   brigand / monster) spawn **around players** (the planet's too big to simulate
   globally), wander or chase; brigands & monsters attack you. **Attack (R)** the
