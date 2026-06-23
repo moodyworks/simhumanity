@@ -15,4 +15,9 @@ if [ ! -f .env ]; then
   cp .env.example .env
 fi
 
+# Stop any previous instance first, so restarts are clean and we never pile up
+# orphaned servers holding the port (which makes a "restart" silently no-op).
+pkill -9 -f 'server\.main' 2>/dev/null || true
+sleep 0.5
+
 exec ./.venv/bin/python -m server.main

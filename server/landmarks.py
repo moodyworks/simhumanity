@@ -23,6 +23,7 @@ SITES: list[dict] = [
      "note": "The oldest known monumental temple — ringed stone pillars raised "
              "by hunter-gatherers, millennia before farming or writing."},
     {"name": "Çatalhöyük", "lon": 32.83, "lat": 37.67, "era": "c. 7400 BC",
+     "tile": (254, 83),  # inland on the Anatolian highland, not the coast
      "note": "One of the earliest proto-cities: a honeycomb of mud-brick houses "
              "entered through the roof, home to thousands."},
     {"name": "Jericho", "lon": 35.44, "lat": 31.87, "era": "c. 9000 BC",
