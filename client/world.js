@@ -20,6 +20,7 @@ let last = 0;
 const minimap = new Image(); minimap.src = "/static/minimap.jpg"; // whole-Earth overview
 let spawned = false;       // movement is disabled until the player picks a spawn city
 let spawnCities = [];      // cities of the age — the spawn options
+let ws = null, myPid = null, others = [], lastSent = 0;  // multiplayer presence
 
 function resize() { canvas.width = innerWidth; canvas.height = innerHeight; }
 addEventListener("resize", resize); resize();
@@ -36,7 +37,8 @@ function tileToLonLat(tx, ty) {
 }
 
 function ensureChunk(c, r) {
-  if (c < 0 || r < 0 || c >= man.cols || r >= man.rows) return;
+  if (r < 0 || r >= man.rows) return;             // poles are a wall (N/S)
+  c = ((c % man.cols) + man.cols) % man.cols;      // wrap around the globe (E/W)
   const k = c + "_" + r;
   if (chunks.has(k)) return;
   const img = new Image();
@@ -61,8 +63,12 @@ function update(dt) {
     if (keys.has("a") || keys.has("arrowleft")) dx -= 1;
     if (keys.has("d") || keys.has("arrowright")) dx += 1;
     if (dx || dy) { const m = Math.hypot(dx, dy) || 1; px += dx / m * sp; py += dy / m * sp; }
-    px = Math.max(0, Math.min(man.src_w - 1, px));
-    py = Math.max(0, Math.min(man.src_h - 1, py));
+    px = ((px % man.src_w) + man.src_w) % man.src_w;  // wrap around the globe E/W
+    py = Math.max(0, Math.min(man.src_h - 1, py));     // poles are a wall N/S
+  }
+  if (spawned && ws && ws.readyState === 1 && performance.now() - lastSent > 150) {
+    ws.send(JSON.stringify({ action: "move", x: Math.round(px), y: Math.round(py) }));
+    lastSent = performance.now();
   }
   // load the chunks covering the view plus a one-chunk margin
   const v = viewRect(), cp = man.chunk_px;
@@ -80,10 +86,12 @@ function render() {
   const offX = Math.round(canvas.width / 2 - px * TILE), offY = Math.round(canvas.height / 2 - py * TILE);
   const v = viewRect();
   for (let r = Math.floor(v.y0 / cp); r <= Math.floor(v.y1 / cp); r++) {
+    if (r < 0 || r >= man.rows) continue;                   // beyond the poles = void
     for (let c = Math.floor(v.x0 / cp); c <= Math.floor(v.x1 / cp); c++) {
-      const e = chunks.get(c + "_" + r);
+      const ac = ((c % man.cols) + man.cols) % man.cols;    // wrapped actual column
+      const e = chunks.get(ac + "_" + r);
       if (!e || !e.loaded) continue;
-      const gx = c * cp, gy = r * cp;                       // chunk's global tile origin
+      const gx = c * cp, gy = r * cp;     // virtual origin (drawn position) — wraps seamlessly
       const ix0 = Math.max(gx, Math.floor(v.x0)), iy0 = Math.max(gy, Math.floor(v.y0));
       const ix1 = Math.min(gx + cp, Math.ceil(v.x1)), iy1 = Math.min(gy + cp, Math.ceil(v.y1));
       if (ix1 <= ix0 || iy1 <= iy0) continue;
@@ -91,6 +99,18 @@ function render() {
                     offX + ix0 * TILE, offY + iy0 * TILE, (ix1 - ix0) * TILE, (iy1 - iy0) * TILE);
     }
   }
+  // other players (multiplayer presence) — drawn at the nearest wrap of their x
+  for (const p of others) {
+    let ox = p.x; const d = ox - px;
+    if (d > man.src_w / 2) ox -= man.src_w; else if (d < -man.src_w / 2) ox += man.src_w;
+    const sx = offX + ox * TILE, sy = offY + p.y * TILE;
+    if (sx < -50 || sy < -50 || sx > canvas.width + 50 || sy > canvas.height + 50) continue;
+    ctx.fillStyle = "#ffd24a"; ctx.fillRect(sx - TILE / 2, sy - TILE / 2, TILE, TILE);
+    ctx.strokeStyle = "#000"; ctx.lineWidth = 1; ctx.strokeRect(sx - TILE / 2, sy - TILE / 2, TILE, TILE);
+    ctx.fillStyle = "#fff"; ctx.font = "12px ui-monospace, monospace"; ctx.textAlign = "center";
+    ctx.fillText(p.name, sx, sy - TILE / 2 - 3); ctx.textAlign = "left";
+  }
+
   // player marker
   const cx = canvas.width / 2, cy = canvas.height / 2;
   ctx.fillStyle = "#ff3b3b";
@@ -110,6 +130,10 @@ function render() {
       ctx.fillStyle = "#7fd6ff";
       ctx.fillRect(mx + t[0] / man.src_w * mmW - 1.5, my + t[1] / man.src_h * mmH - 1.5, 3, 3);
     }
+    for (const p of others) {  // other players
+      ctx.fillStyle = "#ffd24a";
+      ctx.fillRect(mx + p.x / man.src_w * mmW - 1.5, my + p.y / man.src_h * mmH - 1.5, 3, 3);
+    }
     const dx = mx + px / man.src_w * mmW, dy = my + py / man.src_h * mmH;
     ctx.fillStyle = "#ff3b3b"; ctx.beginPath(); ctx.arc(dx, dy, 3.5, 0, 7); ctx.fill();
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.stroke();
@@ -117,7 +141,7 @@ function render() {
 
   const [lon, lat] = tileToLonLat(px, py);
   hud.innerHTML =
-    `simhumanity — <b>real Earth</b> (C1 quadrant tiled)\n` +
+    `simhumanity — <b>real Earth</b>` + (spawned ? `   online <b>${others.length + 1}</b>` : ``) + `\n` +
     `lat ${lat.toFixed(2)}  lon ${lon.toFixed(2)}   tile ${px | 0},${py | 0}\n` +
     `zoom <b>${TILE}</b> px/tile   <b>WASD</b> move · <b>Shift</b> run · <b>+/-</b> zoom`;
 }
@@ -140,6 +164,22 @@ function spawnAt(c) {
   [px, py] = lonlatToTile(c.lon, c.lat);
   spawned = true;
   document.getElementById("spawn").style.display = "none";
+  connectWorld(c.name);
+}
+
+function connectWorld(city) {  // multiplayer presence over /world/ws
+  const proto = location.protocol === "https:" ? "wss://" : "ws://";
+  ws = new WebSocket(proto + location.host + "/world/ws");
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.type === "welcome") {
+      myPid = m.pid;
+      ws.send(JSON.stringify({ action: "spawn", x: Math.round(px), y: Math.round(py), city }));
+    } else if (m.type === "presence") {
+      others = (m.players || []).filter((p) => p.pid !== myPid);
+    }
+  };
+  ws.onclose = () => { ws = null; };
 }
 
 function loadSpawns() {  // cities of the age — pick one to begin

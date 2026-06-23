@@ -22,6 +22,7 @@ from .landmarks import km_per_tile
 from .quests import build_claims
 from .settings import SETTINGS
 from .world import World
+from .worldgame import WorldGame
 
 CLIENT_DIR = Path(__file__).resolve().parent.parent / "client"
 WORLD_TILES_DIR = Path(__file__).resolve().parent.parent / "world_tiles"
@@ -51,17 +52,40 @@ _clients: set[WebSocket] = set()
 # pid -> websocket, so the tick loop can route per-player notices.
 _ws_by_pid: dict[str, WebSocket] = {}
 
+# World-map game (separate from the test-map World): presence broadcast to its
+# own clients so players see each other on the real Earth.
+world_game = WorldGame()
+_world_clients: dict[WebSocket, str] = {}  # ws -> pid
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     task = asyncio.create_task(_tick_loop())
+    wtask = asyncio.create_task(_world_loop())
     try:
         yield
     finally:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        for t in (task, wtask):
+            t.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await t
         log.close()
+
+
+async def _world_loop() -> None:
+    """Broadcast world-map player presence to its clients at ~8 Hz."""
+    while True:
+        await asyncio.sleep(0.125)
+        if not _world_clients:
+            continue
+        msg = json.dumps({"type": "presence", **world_game.snapshot()})
+        for ws in list(_world_clients):
+            try:
+                await ws.send_text(msg)
+            except Exception:
+                pid = _world_clients.pop(ws, None)
+                if pid:
+                    world_game.leave(pid)
 
 
 app = FastAPI(title="simhumanity", lifespan=lifespan)
@@ -334,6 +358,31 @@ async def world_spawns(year: int = -2000) -> dict:
             "stage": city_stage(c["timeline"], year)} for c in CITIES]
     out = sorted((c for c in out if c["stage"] > 0), key=lambda c: -c["stage"])
     return {"year": year, "spawns": out}
+
+
+@app.websocket("/world/ws")
+async def world_ws(ws: WebSocket) -> None:
+    """World-map multiplayer: the client spawns and streams its position; the
+    server tracks presence and (via _world_loop) broadcasts everyone's positions."""
+    await ws.accept()
+    pid = uuid.uuid4().hex[:8]
+    await ws.send_text(json.dumps({"type": "welcome", "pid": pid}))
+    _world_clients[ws] = pid
+    try:
+        while True:
+            msg = json.loads(await ws.receive_text())
+            action = msg.get("action")
+            if action == "spawn":
+                name = msg.get("name") or f"Wanderer-{pid[:4]}"
+                world_game.join(pid, name, msg.get("x", 0), msg.get("y", 0),
+                                msg.get("city", ""))
+            elif action == "move":
+                world_game.move(pid, msg.get("x", 0), msg.get("y", 0))
+    except WebSocketDisconnect:
+        pass
+    finally:
+        _world_clients.pop(ws, None)
+        world_game.leave(pid)
 
 
 app.mount("/static", StaticFiles(directory=CLIENT_DIR), name="static")

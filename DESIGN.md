@@ -300,6 +300,13 @@ For the **real world map** (Roadmap), bake accurate coordinates in from the star
 
 ## Changelog
 
+- **2026-06-23 (d)** — **World map becomes a multiplayer game (port begins).** Whole
+  planet tiled (16,200 chunks). `/world` now: pick a **city of the age** to spawn
+  (`/world/spawns?year=`), connect over **`/world/ws`**, and **see other players**
+  (markers + names, minimap dots, online count). Server tracks presence
+  (`worldgame.py`) and broadcasts at 8 Hz, separate from the test-map game. The
+  world **wraps E/W** (circumnavigate) with the **poles as walls**. Next:
+  land/water movement, gather/build, eras, NPCs on the real Earth.
 - **2026-06-23 (c)** — **Sea painted from GEBCO, not colour.** Colour-classifying
   water failed on rivers, polar seas and anti-aliased coasts. Now `tile_world.py`
   composites the sea from authoritative **GEBCO**: water = topo elevation 0,
