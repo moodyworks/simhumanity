@@ -86,7 +86,7 @@ def _find(d: Path, key: str) -> Path | None:
 
 
 def composite_sea(im: Image.Image, topo_path: Path, bath_path: Path,
-                  band: int = 2048) -> Image.Image:
+                  band: int = 2048, grab: int = 12) -> Image.Image:
     """Paint the sea from authoritative GEBCO data instead of guessing from colour:
     water = land-elevation 0 (topo), depth-shaded by bathymetry. Gives clean coasts
     and full polar oceans (no colour mis-classification), smooth real depth, and the
@@ -97,17 +97,26 @@ def composite_sea(im: Image.Image, topo_path: Path, bath_path: Path,
     topo = np.asarray(Image.open(topo_path).convert("L"))
     bath = np.asarray(Image.open(bath_path).convert("L"))
     base = np.array([60, 120, 168], np.float32)  # main sea colour
+    pad = grab + 2 - (grab % 2)  # even, >= grab — keeps the 2x GEBCO upsample aligned
     for y0 in range(0, H, band):
         y1 = min(y0 + band, H)
-        a = np.asarray(im.crop((0, y0, W, y1)))
-        g0, g1 = y0 // 2, -(-y1 // 2)
-        water = np.repeat(np.repeat(topo[g0:g1] == 0, 2, 0), 2, 1)[:y1 - y0, :W]
-        deep = np.clip((255 - bath[g0:g1].astype(np.int16)) / 120.0, 0, 1)
-        deep = np.repeat(np.repeat(deep, 2, 0), 2, 1)[:y1 - y0, :W]
+        ey0, ey1 = max(0, y0 - pad), min(H, y1 + pad)  # extended band for the grab
+        a = np.asarray(im.crop((0, ey0, W, ey1)))
+        R, G, B = (a[:, :, i].astype(np.int16) for i in range(3))
+        s = R + G + B
+        g0, g1 = ey0 // 2, -(-ey1 // 2)
+        wg = np.repeat(np.repeat(topo[g0:g1] == 0, 2, 0), 2, 1)[:ey1 - ey0, :W]
+        deepg = np.clip((255 - bath[g0:g1].astype(np.int16)) / 120.0, 0, 1)
+        deepg = np.repeat(np.repeat(deepg, 2, 0), 2, 1)[:ey1 - ey0, :W]
+        # GEBCO's 1km coast leaves near-black satellite sea mislabelled land; grab it
+        coastal = ((s < 55) & (B >= R)) & _dilate(wg, grab)
+        water = wg | coastal
+        deep = np.where(wg, deepg, 0.0)  # grabbed coastal pixels are shallow
         shade = (base * (1.0 - 0.20 * deep[..., None])).astype(np.uint8)  # subtle depth
         out = a.copy()
         out[water] = shade[water]
-        im.paste(Image.fromarray(out, "RGB"), (0, y0))
+        core = out[y0 - ey0: y0 - ey0 + (y1 - y0)]
+        im.paste(Image.fromarray(core, "RGB"), (0, y0))
     return im
 
 
