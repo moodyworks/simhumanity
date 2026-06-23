@@ -22,10 +22,12 @@ Writes world_tiles/c{col}_r{row}.<ext> (global chunk coords) and a manifest.json
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
 Image.MAX_IMAGE_PIXELS = None  # the source exceeds PIL's decompression-bomb guard
@@ -37,6 +39,24 @@ OUT = ROOT / "world_tiles"
 LON_W, LON_E, LAT_N, LAT_S = -180.0, 180.0, 90.0, -90.0
 NASA_COLS = "ABCD"  # longitude, west -> east
 NASA_ROWS = "12"    # latitude, north (1) -> south (2)
+CRISP = os.environ.get("CRISP", "1") != "0"  # repaint seas for a defined coastline
+
+
+def crisp_water(im: Image.Image, band: int = 2048) -> Image.Image:
+    """Give the anti-aliased coastline a defined edge: classify ocean-blue pixels
+    and repaint them flat sea colours, so land and water separate cleanly. Land is
+    left photographic. Done in horizontal bands to bound memory on huge tiles."""
+    W, H = im.size
+    for y0 in range(0, H, band):
+        a = np.asarray(im.crop((0, y0, W, min(y0 + band, H))))
+        R, G, B = (a[:, :, i].astype(np.int16) for i in range(3))
+        s = R + G + B
+        water = (s < 55) & (B >= R)  # this Blue Marble renders oceans near-black
+        out = a.copy()
+        out[water & (s < 18)] = (24, 64, 120)     # deep
+        out[water & (s >= 18)] = (52, 112, 162)   # coastal / shallow
+        im.paste(Image.fromarray(out, "RGB"), (0, y0))
+    return im
 
 
 def _save_kw(ext: str) -> dict:
@@ -105,6 +125,8 @@ def tile_nasa(src_dir: Path, chunk: int, ext: str, only: str | None = None) -> N
             if only and (cl + rdig) != only:
                 continue
             im = Image.open(paths[cl + rdig]).convert("RGB")
+            if CRISP:
+                crisp_water(im)
             for lr in range(cpt):
                 for lc in range(cpt):
                     box = (lc * chunk, lr * chunk, (lc + 1) * chunk, (lr + 1) * chunk)
