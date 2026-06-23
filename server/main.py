@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .ai import MythEngine, make_provider
+from .cities import CITIES, city_stage
 from .eventlog import EventLog
 from .landmarks import km_per_tile
 from .quests import build_claims
@@ -322,6 +323,17 @@ async def index() -> FileResponse:
 async def world_viewer() -> FileResponse:
     """Standalone real-Earth chunk viewer (the world-map vertical slice)."""
     return FileResponse(CLIENT_DIR / "world.html")
+
+
+@app.get("/world/spawns")
+async def world_spawns(year: int = -2000) -> dict:
+    """Cities of the age to spawn into — those that exist (stage > 0) in `year`.
+    Returns lon/lat; the client projects to a world tile via the manifest. This
+    clusters players together in real settlements instead of an empty planet."""
+    out = [{"name": c["name"], "lon": c["lon"], "lat": c["lat"],
+            "stage": city_stage(c["timeline"], year)} for c in CITIES]
+    out = sorted((c for c in out if c["stage"] > 0), key=lambda c: -c["stage"])
+    return {"year": year, "spawns": out}
 
 
 app.mount("/static", StaticFiles(directory=CLIENT_DIR), name="static")

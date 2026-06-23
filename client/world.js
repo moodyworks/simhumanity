@@ -18,6 +18,8 @@ const chunks = new Map(); // "c_r" -> {img, loaded, missing}
 const keys = new Set();
 let last = 0;
 const minimap = new Image(); minimap.src = "/static/minimap.jpg"; // whole-Earth overview
+let spawned = false;       // movement is disabled until the player picks a spawn city
+let spawnCities = [];      // cities of the age — the spawn options
 
 function resize() { canvas.width = innerWidth; canvas.height = innerHeight; }
 addEventListener("resize", resize); resize();
@@ -51,17 +53,17 @@ function viewRect() { // visible area in global tiles
 }
 
 function update(dt) {
-  // movement (Shift = run); realistic scale, so this is "game-fast" for the demo
-  const run = keys.has("shift") ? 60 : 1; // 10x run, for fast land-verification
-  const sp = 14 * run * dt; // tiles/sec
-  let dx = 0, dy = 0;
-  if (keys.has("w") || keys.has("arrowup")) dy -= 1;
-  if (keys.has("s") || keys.has("arrowdown")) dy += 1;
-  if (keys.has("a") || keys.has("arrowleft")) dx -= 1;
-  if (keys.has("d") || keys.has("arrowright")) dx += 1;
-  if (dx || dy) { const m = Math.hypot(dx, dy) || 1; px += dx / m * sp; py += dy / m * sp; }
-  px = Math.max(0, Math.min(man.src_w - 1, px));
-  py = Math.max(0, Math.min(man.src_h - 1, py));
+  if (spawned) {  // movement (Shift = run); realistic scale, "game-fast" for the demo
+    const sp = 14 * (keys.has("shift") ? 60 : 1) * dt; // tiles/sec (10x run)
+    let dx = 0, dy = 0;
+    if (keys.has("w") || keys.has("arrowup")) dy -= 1;
+    if (keys.has("s") || keys.has("arrowdown")) dy += 1;
+    if (keys.has("a") || keys.has("arrowleft")) dx -= 1;
+    if (keys.has("d") || keys.has("arrowright")) dx += 1;
+    if (dx || dy) { const m = Math.hypot(dx, dy) || 1; px += dx / m * sp; py += dy / m * sp; }
+    px = Math.max(0, Math.min(man.src_w - 1, px));
+    py = Math.max(0, Math.min(man.src_h - 1, py));
+  }
   // load the chunks covering the view plus a one-chunk margin
   const v = viewRect(), cp = man.chunk_px;
   for (let r = Math.floor(v.y0 / cp) - 1; r <= Math.floor(v.y1 / cp) + 1; r++)
@@ -103,6 +105,11 @@ function render() {
     ctx.globalAlpha = 0.92; ctx.drawImage(minimap, mx, my, mmW, mmH); ctx.globalAlpha = 1;
     ctx.imageSmoothingEnabled = false;
     ctx.strokeStyle = "#39405a"; ctx.lineWidth = 1; ctx.strokeRect(mx + 0.5, my + 0.5, mmW, mmH);
+    for (const c of spawnCities) {  // cities of the age
+      const t = lonlatToTile(c.lon, c.lat);
+      ctx.fillStyle = "#7fd6ff";
+      ctx.fillRect(mx + t[0] / man.src_w * mmW - 1.5, my + t[1] / man.src_h * mmH - 1.5, 3, 3);
+    }
     const dx = mx + px / man.src_w * mmW, dy = my + py / man.src_h * mmH;
     ctx.fillStyle = "#ff3b3b"; ctx.beginPath(); ctx.arc(dx, dy, 3.5, 0, 7); ctx.fill();
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.stroke();
@@ -129,8 +136,35 @@ addEventListener("keydown", (e) => {
 });
 addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
 
+function spawnAt(c) {
+  [px, py] = lonlatToTile(c.lon, c.lat);
+  spawned = true;
+  document.getElementById("spawn").style.display = "none";
+}
+
+function loadSpawns() {  // cities of the age — pick one to begin
+  fetch("/world/spawns").then((r) => r.json()).then((d) => {
+    spawnCities = d.spawns || [];
+    if (spawnCities.length) [px, py] = lonlatToTile(spawnCities[0].lon, spawnCities[0].lat);
+    const era = d.year < 0 ? `${-d.year} BC` : `${d.year} AD`;
+    document.getElementById("spawnEra").textContent = `Cities of the age — ${era}`;
+    const list = document.getElementById("spawnList");
+    const size = ["", "hamlet", "town", "city", "metropolis"];
+    list.innerHTML = "";
+    for (const c of spawnCities) {
+      const ns = c.lat >= 0 ? "N" : "S", ew = c.lon >= 0 ? "E" : "W";
+      const b = document.createElement("button");
+      b.innerHTML = `<span class="nm">${c.name}</span><span class="meta">` +
+        `${size[c.stage]} · ${Math.abs(c.lat).toFixed(1)}°${ns} ${Math.abs(c.lon).toFixed(1)}°${ew}</span>`;
+      b.onclick = () => spawnAt(c);
+      list.appendChild(b);
+    }
+    if (spawnCities.length) document.getElementById("spawn").style.display = "flex";
+  }).catch(() => {});
+}
+
 fetch("/tiles/manifest.json", { cache: "no-store" }).then((r) => r.json()).then((m) => {
   man = m;
-  [px, py] = lonlatToTile(45.6, 31.3); // spawn: Uruk, Sumer — the first cities
+  loadSpawns();
   requestAnimationFrame(frame);
 }).catch(() => { hud.textContent = "no world tiles yet — run tools/tile_world.py"; });
