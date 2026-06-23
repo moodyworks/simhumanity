@@ -21,3 +21,5 @@ med_sites_final.png
 # NASA source imagery (500m tiles + 8km overview) — large, public domain, regenerable assets
 highres/
 client/minimap.jpg
+# Obsolete Dymaxion source tiles (abandoned for Blue Marble)
+[1-9]-[0-9].jpg
