@@ -76,7 +76,7 @@ def tile_single(src: Path, chunk: int, ext: str) -> None:
     print(f"world = {W} x {H} game tiles ({W * H / 1e6:.0f}M tiles)")
 
 
-def tile_nasa(src_dir: Path, chunk: int, ext: str) -> None:
+def tile_nasa(src_dir: Path, chunk: int, ext: str, only: str | None = None) -> None:
     # Locate the 8 tiles by their A1..D2 suffix.
     paths: dict[str, Path] = {}
     for r in NASA_ROWS:
@@ -100,6 +100,8 @@ def tile_nasa(src_dir: Path, chunk: int, ext: str) -> None:
     kw, n = _save_kw(ext), 0
     for ri, rdig in enumerate(NASA_ROWS):
         for ci, cl in enumerate(NASA_COLS):
+            if only and (cl + rdig) != only:
+                continue
             im = Image.open(paths[cl + rdig]).convert("RGB")
             for lr in range(cpt):
                 for lc in range(cpt):
@@ -120,9 +122,13 @@ def main() -> None:
     src = Path(sys.argv[1])
     chunk = int(sys.argv[2]) if len(sys.argv) > 2 else 600
     ext = (sys.argv[3] if len(sys.argv) > 3 else "jpg").lower()
+    only = sys.argv[4] if len(sys.argv) > 4 else None  # e.g. C1 — tile one quadrant
     if not src.exists():
         sys.exit(f"not found: {src}")
-    (tile_nasa if src.is_dir() else tile_single)(src, chunk, ext)
+    if src.is_dir():
+        tile_nasa(src, chunk, ext, only)
+    else:
+        tile_single(src, chunk, ext)
 
 
 if __name__ == "__main__":

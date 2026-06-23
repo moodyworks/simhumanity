@@ -23,6 +23,8 @@ from .settings import SETTINGS
 from .world import World
 
 CLIENT_DIR = Path(__file__).resolve().parent.parent / "client"
+WORLD_TILES_DIR = Path(__file__).resolve().parent.parent / "world_tiles"
+WORLD_TILES_DIR.mkdir(exist_ok=True)  # so the static mount never fails on a fresh checkout
 
 # For now, every server (re)start is a completely fresh game: wipe the persisted
 # event log so nothing carries over a hard reset. (Real persistence is future.)
@@ -316,7 +318,15 @@ async def index() -> FileResponse:
     return FileResponse(CLIENT_DIR / "index.html")
 
 
+@app.get("/world")
+async def world_viewer() -> FileResponse:
+    """Standalone real-Earth chunk viewer (the world-map vertical slice)."""
+    return FileResponse(CLIENT_DIR / "world.html")
+
+
 app.mount("/static", StaticFiles(directory=CLIENT_DIR), name="static")
+# Generated world chunks (gitignored). Served pixel-for-pixel to the world viewer.
+app.mount("/tiles", StaticFiles(directory=WORLD_TILES_DIR), name="tiles")
 
 
 def main() -> None:

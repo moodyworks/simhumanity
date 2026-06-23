@@ -300,6 +300,15 @@ For the **real world map** (Roadmap), bake accurate coordinates in from the star
 
 ## Changelog
 
+- **2026-06-23 (b)** — **World-map vertical slice is walkable.** New `/world` page
+  (`client/world.html` + `world.js`) streams the real-Earth chunks and lets you
+  **walk a pixel-for-pixel patch of Earth** (1 source pixel = 1 tile, real colours,
+  3×3-ring chunk loading, untiled regions stay dark). Spawns at **Uruk** (the HUD's
+  lat/lon confirms the equirectangular placement is exact). Server serves chunks at
+  `/tiles` + the viewer at `/world`. Colour source = the combined relief+bathymetry
+  500m tiles (`world.topo.bathy.*`). So far only the **C1 quadrant** (Fertile
+  Crescent / Mediterranean / India-NW) is tiled. Next: tile the rest, era-city
+  spawn, fold into the game, topo→mountains + bath→sea level.
 - **2026-06-23** — **World-map pipeline started (will replace the test map).**
   `tools/tile_world.py` slices a full-res equirectangular source into **1px=1tile**
   game chunks (`world_tiles/c{col}_r{row}` + `manifest.json`) for 3×3-ring chunk

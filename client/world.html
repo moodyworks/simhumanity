@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>simhumanity — world</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #05070d; overflow: hidden;
+      font: 13px ui-monospace, monospace; color: #cdd6e6; }
+    #view { display: block; image-rendering: pixelated; }
+    #hud { position: fixed; top: 10px; left: 10px; z-index: 5;
+      background: rgba(10, 12, 18, 0.82); padding: 8px 11px; border-radius: 6px;
+      white-space: pre; line-height: 1.55; pointer-events: none; }
+    b { color: #ffd86b; }
+  </style>
+</head>
+<body>
+  <div id="hud">loading…</div>
+  <canvas id="view"></canvas>
+  <script src="/static/world.js"></script>
+</body>
+</html>
