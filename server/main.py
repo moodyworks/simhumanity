@@ -210,6 +210,16 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 world.set_running(pid, bool(msg.get("on")))
             elif action == "set_year":  # debug: jump the clock
                 world.set_year(int(msg.get("year", 0)))
+            elif action == "move_place":  # debug: relocate a city/site
+                v = world.move_place(
+                    str(msg.get("kind", "")), str(msg.get("name", "")),
+                    int(msg.get("x", -1)), int(msg.get("y", -1)))
+                if v:
+                    await ws.send_text(json.dumps({"type": "log",
+                        "text": f"Moved {v['name']} to ({v['x']},{v['y']}). Saved."}))
+                    if v["kind"] == "site":  # cities update via the snapshot
+                        await ws.send_text(json.dumps(
+                            {"type": "landmarks", "landmarks": world.landmarks_public()}))
             elif action == "goto":
                 world.set_goal(pid, int(msg.get("x", -1)), int(msg.get("y", -1)))
             elif action == "attack":

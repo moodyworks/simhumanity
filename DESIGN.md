@@ -121,9 +121,13 @@ they inherit and argue about. The past literally becomes the future's content.
 - **Enemies and NPCs are only drawn within current line of sight.**
 - Fog also applies to the **minimap** (and to discovered sites/cities/players).
 - **Debug mode** (**O** key / **Debug** button): reveals the whole map (fog off,
-  all mobs visible) and turns the **age/year label into a control — click it to
-  type a year** and jump the world clock there; assets repopulate for that year
-  (cities rise/fall to their stage, era updates). Great for testing the timeline.
+  all mobs visible); turns the **age/year label into a control — click it to type
+  a year** and jump the world clock there (assets repopulate); and shows a
+  **place-tool dropdown** — pick a city/site, then **click the map to relocate
+  it**. Relocations are **permanent** (saved to `place_overrides.json`, applied
+  over the defaults on every world build). This is the reliable way to accurize
+  placements on the stylized test map (human-in-the-loop, since lon/lat→tile is
+  unreliable here).
 
 ---
 

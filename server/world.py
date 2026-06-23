@@ -7,9 +7,11 @@ the game. The LLM layer (DeepSeek) sits above this and is called rarely.
 from __future__ import annotations
 
 import heapq
+import json
 import random
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 
 from . import economy
 from .cities import CITIES, city_stage
@@ -21,6 +23,24 @@ from .mapdata import LEGEND, build_terrain
 from .plans import (COASTAL_PLANS, PLAN_PRICE, PLANS, RUIN_TEACHABLE,
                     SITE_TEACHES, STARTING_PLANS, plan_public)
 from .quests import public_claim
+
+# Debug placement overrides (set via the in-game place tool). Persisted to a JSON
+# file so moved cities/sites stay put across restarts / fresh games. Keyed by
+# "city:<name>" / "site:<name>" → [x, y].
+OVERRIDES_PATH = Path(__file__).resolve().parent.parent / "place_overrides.json"
+
+
+def load_place_overrides() -> dict:
+    try:
+        return json.loads(OVERRIDES_PATH.read_text())
+    except Exception:
+        return {}
+
+
+def save_place_override(key: str, x: int, y: int) -> None:
+    data = load_place_overrides()
+    data[key] = [x, y]
+    OVERRIDES_PATH.write_text(json.dumps(data, indent=2, sort_keys=True))
 
 
 class Terrain(str, Enum):
@@ -215,6 +235,7 @@ class World:
         # Major cities that rise and fall on their real historical timeline.
         self.cities: list[dict] = []
         self._place_cities()
+        self._apply_place_overrides()  # debug-tool relocations persist here
         self._update_cities()
         # In-progress site quizzes, keyed by (pid, x, y) → {qid: question}.
         self._site_sessions: dict[tuple, dict] = {}
@@ -364,6 +385,40 @@ class World:
     def cities_public(self) -> list[dict]:
         return [{"x": c["x"], "y": c["y"], "name": c["name"],
                  "stage": c["stage"], "max": c["max"]} for c in self.cities]
+
+    def _apply_place_overrides(self) -> None:
+        """Apply any debug-tool relocations saved to disk over the defaults."""
+        ov = load_place_overrides()
+        for c in self.cities:
+            xy = ov.get("city:" + c["name"])
+            if xy:
+                c["x"], c["y"] = int(xy[0]), int(xy[1])
+        for lm in self.landmarks:
+            xy = ov.get("site:" + lm.name)
+            if xy:
+                self.landmark_at.pop((lm.x, lm.y), None)
+                lm.x, lm.y = int(xy[0]), int(xy[1])
+                self.landmark_at[(lm.x, lm.y)] = lm
+
+    def move_place(self, kind: str, name: str, x: int, y: int) -> dict | None:
+        """Debug: permanently relocate a city or site (persisted to disk)."""
+        if not (0 <= x < self.width and 0 <= y < self.height):
+            return None
+        if kind == "city":
+            for c in self.cities:
+                if c["name"] == name:
+                    c["x"], c["y"] = x, y
+                    save_place_override("city:" + name, x, y)
+                    return {"kind": "city", "name": name, "x": x, "y": y}
+        elif kind == "site":
+            for lm in self.landmarks:
+                if lm.name == name:
+                    self.landmark_at.pop((lm.x, lm.y), None)
+                    lm.x, lm.y = x, y
+                    self.landmark_at[(x, y)] = lm
+                    save_place_override("site:" + name, x, y)
+                    return {"kind": "site", "name": name, "x": x, "y": y}
+        return None
 
     def excavate_landmark(self, pid: str) -> dict | None:
         """Standing on an ancient site opens its study quiz. The relic is only

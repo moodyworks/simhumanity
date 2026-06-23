@@ -81,6 +81,7 @@ let myRelics = [];        // this player's relics {id,name,clue,source}
 let relicPanelOpen = false;
 let fogEnabled = true;    // debug toggle for fog of war
 let kmPerTile = 0;        // real km each tile spans, for the scale bar
+let placingTarget = null; // debug: {kind,name} being relocated by clicking the map
 
 function resize() {
   canvas.width = window.innerWidth;
@@ -160,6 +161,8 @@ function connect() {
     } else if (msg.type === "relics") {
       myRelics = msg.relics || [];
       if (relicPanelOpen) renderRelics();
+    } else if (msg.type === "landmarks") {
+      landmarks = msg.landmarks || landmarks;  // a site was relocated
     }
   };
 
@@ -976,6 +979,15 @@ canvas.addEventListener("click", (e) => {
   const { offX, offY } = cameraOffset();
   const tx = Math.floor((e.clientX - offX) / TILE);
   const ty = Math.floor((e.clientY - offY) / TILE);
+  // Debug place tool: a click drops the selected city/site here.
+  if (placingTarget) {
+    sendAction({ action: "move_place", kind: placingTarget.kind,
+      name: placingTarget.name, x: tx, y: ty });
+    placingTarget = null;
+    const sel = document.getElementById("placeSelect");
+    if (sel) sel.value = "";
+    return;
+  }
   const self = me();
   const en = (state.entities || []).find((q) => q.x === tx && q.y === ty);
   if (en && self && Math.abs(en.x - self.x) + Math.abs(en.y - self.y) <= 1) {
@@ -1061,7 +1073,8 @@ window.addEventListener("keyup", (e) => {
   }
 });
 
-// Debug mode = fog off + the age label becomes a click-to-set-year control.
+// Debug mode = fog off + the age label becomes a click-to-set-year control +
+// a place-tool dropdown for relocating cities/sites.
 function toggleDebug() {
   fogEnabled = !fogEnabled;
   const dbg = !fogEnabled;
@@ -1069,6 +1082,29 @@ function toggleDebug() {
   if (btn) { btn.textContent = `Debug: ${dbg ? "ON" : "off"} (O)`; btn.classList.toggle("off", dbg); }
   const era = document.getElementById("era");
   if (era) era.classList.toggle("debug-clickable", dbg);
+  const sel = document.getElementById("placeSelect");
+  if (sel) { sel.style.display = dbg ? "" : "none"; if (dbg) populatePlaceSelect(); }
+  if (!dbg) placingTarget = null;
+}
+
+// Fill the place-tool dropdown with every city and site.
+function populatePlaceSelect() {
+  const sel = document.getElementById("placeSelect");
+  const items = [];
+  for (const c of (state && state.cities) || []) items.push(["city", c.name]);
+  for (const lm of landmarks) items.push(["site", lm.name]);
+  items.sort((a, b) => a[1].localeCompare(b[1]));
+  sel.innerHTML = `<option value="">— place a city/site —</option>` +
+    items.map(([k, n]) => `<option value="${k}:${esc(n)}">${esc(n)} (${k})</option>`).join("");
+}
+
+function onPlaceSelect() {
+  const sel = document.getElementById("placeSelect");
+  const v = sel.value;
+  if (!v) { placingTarget = null; return; }
+  const i = v.indexOf(":");
+  placingTarget = { kind: v.slice(0, i), name: v.slice(i + 1) };
+  toast(`Click the map to place ${placingTarget.name}`, 6000);
 }
 
 // ---- relic inventory: click a relic to read its clue -----------------------

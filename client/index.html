@@ -17,13 +17,16 @@
     <div id="help">
       Click to walk · click a neighbor to talk/fight · minimap to look ·
       WASD move · <b>Shift run</b> · Space gather · B build · E dig ·
-      F talk/trade · R attack · I relics · O debug (then click the age to set a year)
+      F talk/trade · R attack · I relics · O debug (click the age to set a year; use the dropdown to place cities/sites)
     </div>
   </div>
   <div id="buttons">
     <button onclick="toggleRelics()">Relics (I)</button>
     <button onclick="toggleBuildMenu()">Build (B)</button>
     <button id="fogBtn" onclick="toggleDebug()">Debug: off (O)</button>
+    <select id="placeSelect" style="display:none" onchange="onPlaceSelect()">
+      <option value="">— place a city/site —</option>
+    </select>
   </div>
   <div id="toast"></div>
   <div id="legend"></div>

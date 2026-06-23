@@ -6,6 +6,8 @@ __pycache__/
 *.db
 /var/
 .DS_Store
+# Runtime debug placements from the in-game place tool.
+place_overrides.json
 # Regenerable build/verification artifacts (run tools/build_map.py /
 # tools/preview_landmarks.py). The baked grid server/med_map.txt IS committed;
 # these preview images are not.
