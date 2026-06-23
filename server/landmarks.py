@@ -58,6 +58,7 @@ SITES: list[dict] = [
      "note": "Malta's megalithic temples — among the oldest free-standing "
              "structures anywhere, named for the giants said to have built them."},
     {"name": "Akrotiri", "lon": 25.40, "lat": 36.35, "era": "c. 1600 BC",
+     "tile": (209, 90),  # placed via the in-game debug tool
      "note": "A Minoan town on Thera, buried and preserved by the colossal "
              "eruption that may have seeded the Atlantis legend."},
     {"name": "Gadir", "lon": -6.29, "lat": 36.53, "era": "c. 1100 BC",
