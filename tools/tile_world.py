@@ -104,7 +104,7 @@ def composite_sea(im: Image.Image, topo_path: Path, bath_path: Path,
         water = np.repeat(np.repeat(topo[g0:g1] == 0, 2, 0), 2, 1)[:y1 - y0, :W]
         deep = np.clip((255 - bath[g0:g1].astype(np.int16)) / 120.0, 0, 1)
         deep = np.repeat(np.repeat(deep, 2, 0), 2, 1)[:y1 - y0, :W]
-        shade = (base * (1.0 - 0.30 * deep[..., None])).astype(np.uint8)
+        shade = (base * (1.0 - 0.20 * deep[..., None])).astype(np.uint8)  # subtle depth
         out = a.copy()
         out[water] = shade[water]
         im.paste(Image.fromarray(out, "RGB"), (0, y0))
@@ -135,6 +135,31 @@ def draw_rivers(im: Image.Image, features: list, x_off: int, y_off: int,
                 continue  # wholly off this tile
             if len(pts) >= 2:
                 draw.line(pts, fill=color, width=width, joint="curve")
+    return im
+
+
+def draw_lakes(im: Image.Image, features: list, x_off: int, y_off: int,
+               world_w: int, world_h: int, color=(60, 120, 168)) -> Image.Image:
+    """Fill Natural Earth lake polygons (the ones above sea level that GEBCO's
+    sea mask misses — Great Lakes, Victoria, Baikal…). Same projection as rivers;
+    holes (islands in lakes) are ignored."""
+    draw = ImageDraw.Draw(im)
+    W, H = im.size
+
+    def proj(lon, lat):
+        return ((lon + 180.0) / 360.0 * world_w - x_off,
+                (90.0 - lat) / 180.0 * world_h - y_off)
+
+    for feat in features:
+        geom = feat["geometry"]
+        polys = (geom["coordinates"] if geom["type"] == "MultiPolygon"
+                 else [geom["coordinates"]])
+        for poly in polys:
+            pts = [proj(c[0], c[1]) for c in poly[0]]  # outer ring
+            if all(x < -8 or x > W + 8 or y < -8 or y > H + 8 for x, y in pts):
+                continue
+            if len(pts) >= 3:
+                draw.polygon(pts, fill=color)
     return im
 
 
@@ -198,10 +223,13 @@ def tile_nasa(src_dir: Path, chunk: int, ext: str, only: str | None = None) -> N
     cols, rows = len(NASA_COLS) * cpt, len(NASA_ROWS) * cpt
     W, H = len(NASA_COLS) * s, len(NASA_ROWS) * s
     OUT.mkdir(exist_ok=True)
-    rivers = None
-    rv = src_dir.parent / "rivers.geojson"
-    if CRISP and rv.exists():
-        rivers = json.loads(rv.read_text())["features"]
+    rivers = lakes = None
+    if CRISP:
+        rv, lk = src_dir.parent / "rivers.geojson", src_dir.parent / "lakes.geojson"
+        if rv.exists():
+            rivers = json.loads(rv.read_text())["features"]
+        if lk.exists():
+            lakes = json.loads(lk.read_text())["features"]
     kw, n = _save_kw(ext), 0
     for ri, rdig in enumerate(NASA_ROWS):
         for ci, cl in enumerate(NASA_COLS):
@@ -212,6 +240,8 @@ def tile_nasa(src_dir: Path, chunk: int, ext: str, only: str | None = None) -> N
                 tp = _find(src_dir.parent / "topo", cl + rdig)
                 bp = _find(src_dir.parent / "bath", cl + rdig)
                 composite_sea(im, tp, bp) if (tp and bp) else crisp_water(im)
+                if lakes:
+                    draw_lakes(im, lakes, ci * s, ri * s, W, H)
                 if rivers:
                     draw_rivers(im, rivers, ci * s, ri * s, W, H)
             for lr in range(cpt):
