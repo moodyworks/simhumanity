@@ -21,7 +21,8 @@ const minimap = new Image(); minimap.src = "/static/minimap.jpg"; // whole-Earth
 let spawned = false;       // movement is disabled until the player picks a spawn city
 let spawnCities = [];      // cities of the age — the spawn options
 let ws = null, myPid = null, others = [], lastSent = 0;  // multiplayer presence
-let builds = {}, myInv = {}, structures = [];            // gather / build state
+let builds = {}, myInv = {}, structures = [], ruins = []; // gather / build / dig state
+let worldYear = null, worldEra = "";                     // era clock
 const terrainCache = new Map();                          // chunk -> ImageData (land/water)
 let toastT = 0;
 function toast(text) {
@@ -148,6 +149,16 @@ function render() {
     ctx.strokeStyle = "#3a2d18"; ctx.lineWidth = 2; ctx.strokeRect(sx - TILE / 2, sy - TILE / 2, TILE, TILE);
   }
 
+  // ruins (decayed past-era structures — dig sites; press E on one)
+  for (const s of ruins) {
+    let ox = s.x; const d = ox - px;
+    if (d > man.src_w / 2) ox -= man.src_w; else if (d < -man.src_w / 2) ox += man.src_w;
+    const sx = offX + ox * TILE, sy = offY + s.y * TILE;
+    if (sx < -TILE || sy < -TILE || sx > canvas.width || sy > canvas.height) continue;
+    ctx.fillStyle = "#5a4a33"; ctx.fillRect(sx - TILE / 2, sy - TILE / 2, TILE, TILE);
+    ctx.strokeStyle = "#241c10"; ctx.lineWidth = 1; ctx.strokeRect(sx - TILE / 2, sy - TILE / 2, TILE, TILE);
+  }
+
   // other players (multiplayer presence) — drawn at the nearest wrap of their x
   for (const p of others) {
     let ox = p.x; const d = ox - px;
@@ -191,11 +202,14 @@ function render() {
   const [lon, lat] = tileToLonLat(px, py);
   const inv = Object.entries(myInv).map(([k, v]) => `${k} ${v}`).join("  ") || "—";
   const bk = Object.keys(builds).map((b, i) => `${i + 1}:${b}`).join(" ");
+  const eraStr = worldYear == null ? "" :
+    `${worldEra} age · ${worldYear < 0 ? -worldYear + " BC" : worldYear + " AD"}`;
   hud.innerHTML =
     `simhumanity — <b>real Earth</b>` + (spawned ? `   online <b>${others.length + 1}</b>` : ``) + `\n` +
+    (spawned && eraStr ? `<b>${eraStr}</b>\n` : ``) +
     `lat ${lat.toFixed(2)}  lon ${lon.toFixed(2)}   tile ${px | 0},${py | 0}\n` +
     (spawned ? `inv: <b>${inv}</b>\n` : ``) +
-    `<b>WASD</b> move · <b>Shift</b> run · <b>G</b> gather` +
+    `<b>WASD</b> move · <b>Shift</b> run · <b>G</b> gather · <b>E</b> dig` +
     (bk ? ` · build <b>${bk}</b>` : ``) + ` · <b>+/-</b> zoom`;
 }
 
@@ -212,6 +226,7 @@ addEventListener("keydown", (e) => {
   if (k === "-" || k === "_") TILE = Math.max(2, TILE - 4);
   if (!spawned || !ws || ws.readyState !== 1) return;
   if (k === "g" || k === " ") ws.send(JSON.stringify({ action: "gather" }));
+  if (k === "e") ws.send(JSON.stringify({ action: "dig" }));
   const bk = Object.keys(builds);            // 1..N build the listed structures
   if (/^[1-9]$/.test(k) && bk[+k - 1])
     ws.send(JSON.stringify({ action: "build", kind: bk[+k - 1] }));
@@ -236,6 +251,8 @@ function connectWorld(city) {  // multiplayer presence over /world/ws
     } else if (m.type === "presence") {
       others = (m.players || []).filter((p) => p.pid !== myPid);
       structures = m.structures || [];
+      ruins = m.ruins || [];
+      worldYear = m.year; worldEra = m.era;
     } else if (m.type === "inv") {
       myInv = m.inv || {};
     } else if (m.type === "log") {

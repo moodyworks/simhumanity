@@ -300,6 +300,13 @@ For the **real world map** (Roadmap), bake accurate coordinates in from the star
 
 ## Changelog
 
+- **2026-06-23 (f)** — **Eras + archaeology on the world (the Living-History core).**
+  A world clock advances through `ERA_DATES` (`WORLD_YEARS_PER_SEC`, default 4).
+  When the era turns, structures built in a **prior** era **decay into ruins**;
+  **dig (E)** a ruin to recover its materials + an **artifact** and reveal who built
+  it and when (the true record, before the Myth Engine distorts it). HUD shows the
+  age/year; ruins draw as mounds. Verified: bronze hut → feudal era → ruin → dig.
+  Still to port: NPCs, combat, economy/trading, the DeepSeek Myth Engine, boats.
 - **2026-06-23 (e)** — **Land/water movement + gather/build on the world.** Server
   terrain (`worldterrain.py`): land/water + a coarse biome from GEBCO topo + the
   Blue Marble overview (8 km cells, water = sea-level fraction). You **can't walk

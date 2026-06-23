@@ -101,6 +101,7 @@ async def _world_loop() -> None:
     """Broadcast world-map player presence to its clients at ~8 Hz."""
     while True:
         await asyncio.sleep(0.125)
+        world_game.tick()  # advance the era clock; decay prior-era builds to ruins
         if not _world_clients:
             continue
         msg = json.dumps({"type": "presence", **world_game.snapshot()})
@@ -423,6 +424,13 @@ async def world_ws(ws: WebSocket) -> None:
                         "cost": "Not enough materials.", "bad": "Unknown structure."}
                 await ws.send_text(json.dumps({"type": "log",
                     "text": f"Built a {r}." if r in BUILDS else note.get(r, "Can't build.")}))
+                await _send_inv(ws, pid)
+            elif action == "dig":
+                r = world_game.dig(pid)
+                note = {"nothing": "Nothing buried here.",
+                        "again": "You've already excavated this ruin."}
+                await ws.send_text(json.dumps({"type": "log",
+                    "text": note.get(r, r) if r else "Nothing buried here."}))
                 await _send_inv(ws, pid)
     except WebSocketDisconnect:
         pass
