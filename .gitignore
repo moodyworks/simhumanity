@@ -18,3 +18,6 @@ world_tiles/
 med_classified_preview.png
 med_landmarks_preview.png
 med_sites_final.png
+# NASA source imagery (500m tiles + 8km overview) — large, public domain, regenerable assets
+highres/
+client/minimap.jpg

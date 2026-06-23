@@ -300,6 +300,15 @@ For the **real world map** (Roadmap), bake accurate coordinates in from the star
 
 ## Changelog
 
+- **2026-06-23** — **World-map pipeline started (will replace the test map).**
+  `tools/tile_world.py` slices a full-res equirectangular source into **1px=1tile**
+  game chunks (`world_tiles/c{col}_r{row}` + `manifest.json`) for 3×3-ring chunk
+  loading. Supports the NASA Blue Marble **500m** 8-tile grid (A1–D2 →
+  86400×43200 = **3.7 billion tiles**), tiled one source tile at a time (memory-safe)
+  with correct global chunk coords. Minimap baked from the **8km/px** Blue Marble →
+  `client/minimap.jpg`. Ground will render **real pixel colours** (not the 9-class
+  palette). Public-domain imagery only (not Google). Next: chunk-streaming loader +
+  colour→terrain classification. Memory: [[simhumanity-world-map]].
 - **2026-06-22 (latest+2)** — Ancient sites are **date-gated** (hidden/undiggable
   before their founding year — e.g. Memphis & Giza won't appear in 4500 BCE);
   best-effort re-placement of Carthage (Tunisia landmass) and the Egypt cluster.
