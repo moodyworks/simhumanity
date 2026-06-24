@@ -24,6 +24,7 @@ let spawned = false;       // movement is disabled until the player picks a spaw
 let spawnCities = [];      // cities of the age — the spawn options
 let ws = null, myPid = null, others = [], lastSent = 0;  // multiplayer presence
 let myInv = {}, myPlans = [], myRelics = [], structures = [], ruins = []; // inv / plans / relics / builds
+let myRenown = 0;                                       // scholar's renown from site digs
 let worldYear = null, worldEra = "";                     // era clock
 let npcs = [], myHp = null, myMaxHp = null;              // NPCs + combat
 let cities = [], sites = [], resourceNodes = [];        // cities, sites, gatherable nodes
@@ -61,6 +62,51 @@ document.getElementById("buildMenu").addEventListener("click", (e) => {
   if (row && ws && ws.readyState === 1) {
     ws.send(JSON.stringify({ action: "build", kind: row.dataset.t }));
     document.getElementById("buildMenu").style.display = "none";
+  }
+});
+
+let sqAnswers = {};
+function openSiteQuiz(m) {  // standing on a famous site → judge claims true/false
+  sqAnswers = {};
+  document.getElementById("sqName").textContent = "⛏ Excavating " + m.site;
+  document.getElementById("sqNote").textContent = m.note || "";
+  document.getElementById("sqList").innerHTML = m.questions.map((q) =>
+    `<div class="sqq" data-id="${q.id}"><div class="qt">${q.text}</div>` +
+    `<button data-v="1">True</button><button data-v="0">False</button></div>`).join("");
+  document.getElementById("sqFoot").innerHTML =
+    `<button id="sqSubmit">Submit findings</button>` +
+    `<span id="sqHint">judge each claim · walk away to abandon</span>`;
+  document.getElementById("siteQuiz").style.display = "flex";
+}
+function showSiteResult(m) {
+  let html = `<div style="margin-bottom:10px;color:${m.correct === m.total ? "#6fcf6f" : "#ffd86b"}">` +
+    `You judged ${m.correct}/${m.total} claims correctly.</div>`;
+  html += m.bases.map((b) =>
+    `<div class="sqq"><div class="qt">${b.text}</div>` +
+    `<span class="${b.truth ? "good" : "bad"}">${b.truth ? "TRUE" : "FALSE"}</span> — ${b.basis}</div>`).join("");
+  let reward = `Claimed the Relic of ${m.site} · renown now ${m.renown}`;
+  if (m.learned) reward += ` · learned to build ${m.learned}`;
+  html += `<div style="margin:12px 0 0;color:#ffe08a">${reward}</div>`;
+  document.getElementById("sqList").innerHTML = html;
+  document.getElementById("sqName").textContent = "⛏ " + m.site;
+  document.getElementById("sqNote").textContent = "";
+  document.getElementById("sqFoot").innerHTML = `<button id="sqClose">Close</button>`;
+}
+function closeSiteQuiz(abandon) {
+  const el = document.getElementById("siteQuiz");
+  if (el.style.display !== "flex") return;
+  el.style.display = "none";
+  if (abandon && ws && ws.readyState === 1) ws.send(JSON.stringify({ action: "site_abandon" }));
+}
+document.getElementById("siteQuiz").addEventListener("click", (e) => {
+  const btn = e.target.closest("button");
+  if (!btn || !ws) return;
+  if (btn.id === "sqSubmit") { ws.send(JSON.stringify({ action: "site_answer", answers: sqAnswers })); return; }
+  if (btn.id === "sqClose") { closeSiteQuiz(false); return; }
+  const row = btn.closest(".sqq");
+  if (row && btn.dataset.v != null) {
+    sqAnswers[row.dataset.id] = btn.dataset.v === "1";
+    row.querySelectorAll("button").forEach((b) => b.classList.toggle("sel", b === btn));
   }
 });
 
@@ -358,7 +404,8 @@ function render() {
     fill.style.background = pct > 0.6 ? "#4caf50" : pct > 0.3 ? "#d4a017" : "#d9433a";
     document.getElementById("hptext").textContent = `♥ ${myHp}/${myMaxHp}`;
   } else bar.style.display = "none";
-  document.getElementById("vitals").textContent = spawned ? `${myInv.coin || 0} coin` : "";
+  document.getElementById("vitals").textContent = spawned
+    ? `${myInv.coin || 0} coin · ${myRenown} renown` : "";
   const items = Object.entries(myInv).filter(([k]) => k !== "coin").map(([k, v]) => `${k} ${v}`);
   document.getElementById("inv").textContent = spawned ? (items.join(" · ") || "(empty pack)") : "";
   document.getElementById("builds").innerHTML = spawned && myPlans.length ?
@@ -376,6 +423,8 @@ addEventListener("keydown", (e) => {
   if (k === "shift") keys.add("shift"); else keys.add(k);
   if (k === "+" || k === "=") TILE = Math.min(64, TILE + 4);
   if (k === "-" || k === "_") TILE = Math.max(2, TILE - 4);
+  if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k))
+    closeSiteQuiz(true);  // walking away abandons an open excavation
   if (!spawned || !ws || ws.readyState !== 1) return;
   if (k === "g" || k === " ") ws.send(JSON.stringify({ action: "gather" }));
   if (k === "e") ws.send(JSON.stringify({ action: "dig" }));
@@ -402,6 +451,7 @@ function minimapLook(clientX, clientY) {
 canvas.addEventListener("mousedown", (e) => {
   if (minimapLook(e.clientX, e.clientY)) { mmDragging = true; return; }
   if (spawned && man) {  // click-to-move: walk toward the clicked tile
+    closeSiteQuiz(true);  // walking off abandons an open excavation
     const offX = canvas.width / 2 - camX * TILE, offY = canvas.height / 2 - camY * TILE;
     const tx = (Math.floor((e.clientX - offX) / TILE) % man.src_w + man.src_w) % man.src_w;
     const ty = Math.max(0, Math.min(man.src_h - 1, Math.floor((e.clientY - offY) / TILE)));
@@ -444,9 +494,14 @@ function connectWorld(city) {  // multiplayer presence over /world/ws
       myInv = m.inv || {};
       if (m.plans) myPlans = m.plans;
       if (m.relics) myRelics = m.relics;
+      if (m.renown != null) myRenown = m.renown;
       if (m.hp != null) { myHp = m.hp; myMaxHp = m.max_hp; }
     } else if (m.type === "respawn") {
       px = m.x; py = m.y; myHp = m.hp; toast("You were slain — back to your city.");
+    } else if (m.type === "site_quiz") {
+      openSiteQuiz(m);
+    } else if (m.type === "site_result") {
+      showSiteResult(m);
     } else if (m.type === "log") {
       toast(m.text);
     }

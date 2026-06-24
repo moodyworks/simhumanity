@@ -57,6 +57,23 @@
     #buildMenu .bcost { color: #93a3c0; font-size: 12px; }
     #buildMenu .brow.cant { opacity: 0.45; }
     #buildMenu .brow.cant:hover { background: #3a2030; }
+    #siteQuiz { position: fixed; inset: 0; z-index: 21; display: none;
+      align-items: center; justify-content: center; background: rgba(5, 7, 13, 0.78); }
+    #siteQuiz .box { background: #11141d; border: 1px solid #3a3322; border-radius: 10px;
+      padding: 22px 26px; max-width: 600px; max-height: 82vh; overflow: auto;
+      box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6); }
+    #siteQuiz h2 { margin: 0 0 4px; color: #ffd86b; }
+    #sqNote { margin: 0 0 12px; color: #8ea0c0; font-size: 12px; line-height: 1.45; }
+    .sqq { padding: 10px 0; border-top: 1px solid #222a38; }
+    .sqq .qt { margin-bottom: 6px; }
+    .sqq button { font: inherit; cursor: pointer; padding: 4px 14px; margin-right: 8px;
+      background: rgba(30, 36, 52, 0.9); color: #cdd6e6; border: 1px solid #39405a; border-radius: 6px; }
+    .sqq button.sel { background: #2a6aa0; border-color: #4a8fd0; color: #fff; }
+    .sqq .good { color: #6fcf6f; } .sqq .bad { color: #e06a5a; }
+    #sqFoot { margin-top: 16px; display: flex; align-items: center; gap: 14px; }
+    #sqFoot button { font: inherit; cursor: pointer; padding: 8px 18px;
+      background: #2a6aa0; color: #fff; border: 1px solid #4a8fd0; border-radius: 7px; }
+    #sqHint { color: #7c8aa5; font-size: 11px; }
     #log { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
       z-index: 8; background: rgba(10, 12, 18, 0.9); color: #ffe08a; padding: 7px 14px;
       border-radius: 7px; opacity: 0; transition: opacity 0.3s; pointer-events: none;
@@ -85,6 +102,12 @@
     <p style="margin-top:10px;color:#7c8aa5">press I to close</p>
   </div></div>
   <div id="buildMenu"></div>
+  <div id="siteQuiz"><div class="box">
+    <h2 id="sqName"></h2>
+    <p id="sqNote"></p>
+    <div id="sqList"></div>
+    <div id="sqFoot"></div>
+  </div></div>
   <canvas id="view"></canvas>
   <script src="/static/world.js"></script>
 </body>

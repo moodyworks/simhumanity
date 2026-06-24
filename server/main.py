@@ -408,7 +408,7 @@ async def _send_inv(ws: WebSocket, pid: str) -> None:
     p = world_game.players.get(pid)
     if p is not None:
         await ws.send_text(json.dumps({"type": "inv", "inv": p.inv,
-            "hp": p.hp, "max_hp": p.max_hp, "relics": p.relics,
+            "hp": p.hp, "max_hp": p.max_hp, "relics": p.relics, "renown": p.renown,
             "plans": [plan_public(k) for k in sorted(p.plans)]}))
 
 
@@ -458,7 +458,10 @@ async def world_ws(ws: WebSocket) -> None:
             elif action == "dig":
                 r = world_game.dig(pid)
                 st = r.get("status")
-                if st in ("truth", "myth", "again"):
+                if st == "site":  # standing on a famous site → an excavation quiz
+                    await ws.send_text(json.dumps({"type": "site_quiz", "site": r["site"],
+                        "note": r["note"], "questions": r["questions"]}))
+                elif st in ("truth", "myth", "again", "site_done"):
                     await ws.send_text(json.dumps({"type": "log", "text": r["text"]}))
                     await _send_inv(ws, pid)
                     if st == "truth":  # spin the legend (DeepSeek), cache + echo it
@@ -466,6 +469,13 @@ async def world_ws(ws: WebSocket) -> None:
                                                          r["kind"], r["era"]))
                 else:
                     await ws.send_text(json.dumps({"type": "log", "text": "Nothing buried here."}))
+            elif action == "site_answer":
+                r = world_game.answer_site(pid, msg.get("answers", {}))
+                if r:
+                    await ws.send_text(json.dumps({"type": "site_result", **r}))
+                    await _send_inv(ws, pid)
+            elif action == "site_abandon":
+                world_game.leave_site(pid)
             elif action == "talk":
                 r = world_game.talk(pid)
                 if not r:

@@ -16,8 +16,8 @@ from dataclasses import dataclass, field
 from . import economy
 from .cities import CITIES, city_stage
 from .entities import (BRIGAND_NAMES, MONSTER_NAMES, WANDERER_LINES, _FIRST, _roll_speed)
-from .landmarks import SITES, founded_year
-from .plans import PLANS, RUIN_TEACHABLE, STARTING_PLANS, plan_public
+from .landmarks import SITES, founded_year, site_questions
+from .plans import PLANS, RUIN_TEACHABLE, SITE_TEACHES, STARTING_PLANS, plan_public
 from .world import ERA_DATES, ERA_ORDER
 
 # NPCs spawn around players (the world is too big to simulate globally). Stats are
@@ -125,6 +125,8 @@ class WorldPlayer:
     sy: float = 0.0
     plans: set = field(default_factory=set)  # build recipes you know (the tech tree)
     relics: list = field(default_factory=list)  # named relics with clues
+    renown: int = 0  # scholar's renown, earned excavating famous sites
+    dug_sites: set = field(default_factory=set)  # site names already studied
     seen: float = field(default_factory=time.time)
 
 
@@ -141,6 +143,7 @@ class WorldGame:
         self._city_xy: dict[str, tuple] = {}  # cities/sites snapped onto land
         self._site_xy: dict[str, tuple] = {}
         self._snapped = False
+        self._site_sessions: dict[str, dict] = {}  # pid -> open excavation quiz
         self.t0 = time.time()
         self.era = era_index_for(START_YEAR)
 
@@ -370,6 +373,9 @@ class WorldGame:
         p = self.players.get(pid)
         if not p:
             return {"status": "none"}
+        site = self.start_site(pid)  # standing on a famous site → an excavation quiz
+        if site:
+            return site
         key = (int(p.x), int(p.y))
         ruin = self.ruins.get(key)
         if not ruin:
@@ -400,6 +406,63 @@ class WorldGame:
         if ruin is not None:
             ruin["legend"] = legend
 
+    # --- famous-site excavation quizzes -------------------------------------
+    def _site_near(self, p: WorldPlayer):
+        """The founded site the player is standing on (within 2 tiles), or None."""
+        tx, ty = int(p.x), int(p.y)
+        yr = self.year
+        for s in SITES:
+            if yr < founded_year(s["era"]):
+                continue
+            xy = self._site_xy.get(s["name"])
+            if xy and abs(xy[0] - tx) <= 2 and abs(xy[1] - ty) <= 2:
+                return s
+        return None
+
+    def start_site(self, pid: str):
+        """Begin (or report) the excavation quiz for the site under the player."""
+        p = self.players.get(pid)
+        if not p:
+            return None
+        s = self._site_near(p)
+        if not s:
+            return None
+        if s["name"] in p.dug_sites:
+            return {"status": "site_done",
+                    "text": f"You have already studied {s['name']}."}
+        qs = site_questions(s, len(p.dug_sites) + int(p.x) + int(p.y))
+        self._site_sessions[pid] = {"site": s["name"], "q": qs}
+        return {"status": "site", "site": s["name"], "note": s.get("note", ""),
+                "questions": [{"id": q["id"], "text": q["text"]} for q in qs]}
+
+    def answer_site(self, pid: str, answers: dict):
+        """Score the open quiz: claim a relic, renown, and the site's lost plan."""
+        p = self.players.get(pid)
+        sess = self._site_sessions.pop(pid, None)
+        if not p or not sess:
+            return None
+        qs = sess["q"]
+        correct = sum(1 for q in qs
+                      if bool(answers.get(str(q["id"]), answers.get(q["id"]))) == q["truth"])
+        name = sess["site"]
+        p.dug_sites.add(name)
+        p.renown += 2 + correct
+        p.relics.append({"name": f"Relic of {name}", "source": f"excavated at {name}",
+                         "clue": f"Recovered from the ruins of {name}."})
+        learned = SITE_TEACHES.get(name)
+        if learned and learned not in p.plans:
+            p.plans.add(learned)
+        else:
+            learned = None
+        return {"status": "site_result", "site": name, "correct": correct, "total": len(qs),
+                "renown": p.renown, "learned": PLANS[learned]["label"] if learned else None,
+                "bases": [{"text": q["text"], "truth": q["truth"], "basis": q["basis"]}
+                          for q in qs]}
+
+    def leave_site(self, pid: str) -> None:
+        """Walk away mid-quiz → abandon it (the site stays re-diggable)."""
+        self._site_sessions.pop(pid, None)
+
     def trade(self, pid: str) -> dict:
         """Sell your sellable goods to the nearest merchant for coin."""
         p = self.players.get(pid)
@@ -425,6 +488,11 @@ class WorldGame:
         p = self.players.get(pid)
         if p:
             p.x, p.y, p.seen = float(x), float(y), time.time()
+            sess = self._site_sessions.get(pid)  # walked off the dig → abandon the quiz
+            if sess:
+                near = self._site_near(p)
+                if not near or near["name"] != sess["site"]:
+                    self.leave_site(pid)
 
     def leave(self, pid: str) -> None:
         self.players.pop(pid, None)
