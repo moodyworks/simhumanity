@@ -14,6 +14,8 @@ ctx.imageSmoothingEnabled = false; // crisp upscaled pixel-squares
 let TILE = 24;          // screen px per game tile (1 source pixel) — tunable with +/-
 let man = null;         // manifest (world size, chunk grid, geo bounds)
 let px = 0, py = 0;     // player position in global tiles (float, for smooth motion)
+let camX = 0, camY = 0, followCam = true;  // camera; the minimap "look" detaches it
+let mmRect = null, mmDragging = false;     // minimap click/drag-to-look state
 const chunks = new Map(); // "c_r" -> {img, loaded, missing}
 const keys = new Set();
 let last = 0;
@@ -87,9 +89,9 @@ function isWaterTile(tx, ty) {  // water == the rendered sea-blue (matches the m
   return B > R + 20 && B > G && B > 100;
 }
 
-function viewRect() { // visible area in global tiles
+function viewRect() { // visible area in global tiles (centred on the camera)
   const hw = canvas.width / 2 / TILE, hh = canvas.height / 2 / TILE;
-  return { x0: px - hw, y0: py - hh, x1: px + hw, y1: py + hh };
+  return { x0: camX - hw, y0: camY - hh, x1: camX + hw, y1: camY + hh };
 }
 
 function update(dt) {
@@ -102,6 +104,7 @@ function update(dt) {
     if (keys.has("a") || keys.has("arrowleft")) dx -= 1;
     if (keys.has("d") || keys.has("arrowright")) dx += 1;
     if (dx || dy) {
+      followCam = true;  // moving snaps the camera back to you
       const m = Math.hypot(dx, dy) || 1;
       let nx = ((px + dx / m * sp) % man.src_w + man.src_w) % man.src_w;  // wrap E/W
       let ny = Math.max(0, Math.min(man.src_h - 1, py + dy / m * sp));    // poles = wall
@@ -110,6 +113,7 @@ function update(dt) {
       else { if (!isWaterTile(nx, py)) px = nx; if (!isWaterTile(px, ny)) py = ny; }
     }
   }
+  if (followCam) { camX = px; camY = py; }  // else the minimap "look" holds the camera
   if (spawned && ws && ws.readyState === 1 && performance.now() - lastSent > 150) {
     ws.send(JSON.stringify({ action: "move", x: Math.round(px), y: Math.round(py) }));
     lastSent = performance.now();
@@ -127,7 +131,7 @@ function render() {
   const cp = man.chunk_px;
   // snap the camera to whole pixels so adjacent chunks share an exact edge
   // (fractional offsets leave hairline seams between tiles).
-  const offX = Math.round(canvas.width / 2 - px * TILE), offY = Math.round(canvas.height / 2 - py * TILE);
+  const offX = Math.round(canvas.width / 2 - camX * TILE), offY = Math.round(canvas.height / 2 - camY * TILE);
   const v = viewRect();
   for (let r = Math.floor(v.y0 / cp); r <= Math.floor(v.y1 / cp); r++) {
     if (r < 0 || r >= man.rows) continue;                   // beyond the poles = void
@@ -222,8 +226,10 @@ function render() {
     ctx.fillText(p.name, sx, sy - TILE / 2 - 3); ctx.textAlign = "left";
   }
 
-  // player marker
-  const cx = canvas.width / 2, cy = canvas.height / 2;
+  // player marker (relative to the camera — centred when following, offset when looking)
+  let pox = px; const pdd = pox - camX;
+  if (pdd > man.src_w / 2) pox -= man.src_w; else if (pdd < -man.src_w / 2) pox += man.src_w;
+  const cx = offX + pox * TILE, cy = offY + py * TILE;
   ctx.fillStyle = "#ff3b3b";
   ctx.fillRect(cx - TILE / 2, cy - TILE / 2, TILE, TILE);
   ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
@@ -232,10 +238,15 @@ function render() {
   // minimap (whole Earth) — orientation; toggle smoothing on for the downscale
   if (minimap.complete && minimap.width) {
     const mmW = 340, mmH = 170, mx = canvas.width - mmW - 12, my = canvas.height - mmH - 12;
+    mmRect = { x: mx, y: my, w: mmW, h: mmH };  // for click/drag-to-look
     ctx.imageSmoothingEnabled = true;
     ctx.globalAlpha = 0.92; ctx.drawImage(minimap, mx, my, mmW, mmH); ctx.globalAlpha = 1;
     ctx.imageSmoothingEnabled = false;
     ctx.strokeStyle = "#39405a"; ctx.lineWidth = 1; ctx.strokeRect(mx + 0.5, my + 0.5, mmW, mmH);
+    const vr = viewRect();  // viewport rectangle — what's currently on screen
+    ctx.strokeStyle = "rgba(255,255,255,0.7)"; ctx.lineWidth = 1;
+    ctx.strokeRect(mx + vr.x0 / man.src_w * mmW, my + vr.y0 / man.src_h * mmH,
+                   Math.max(2, (vr.x1 - vr.x0) / man.src_w * mmW), Math.max(2, (vr.y1 - vr.y0) / man.src_h * mmH));
     for (const c of spawnCities) {  // cities of the age
       const t = lonlatToTile(c.lon, c.lat);
       ctx.fillStyle = "#7fd6ff";
@@ -259,19 +270,28 @@ function render() {
     ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.5; ctx.stroke();
   }
 
+  // --- HUD (structured elements; graphical HP bar) ---
   const [lon, lat] = tileToLonLat(px, py);
-  const inv = Object.entries(myInv).map(([k, v]) => `${k} ${v}`).join("  ") || "—";
-  const bk = Object.keys(builds).map((b, i) => `${i + 1}:${b}`).join(" ");
-  const eraStr = worldYear == null ? "" :
-    `${worldEra} age · ${worldYear < 0 ? -worldYear + " BC" : worldYear + " AD"}`;
-  const hpStr = myHp != null ? `hp <b>${myHp}/${myMaxHp}</b>   ` : ``;
-  hud.innerHTML =
-    `simhumanity — <b>real Earth</b>` + (spawned ? `   online <b>${others.length + 1}</b>` : ``) + `\n` +
-    (spawned && eraStr ? `<b>${eraStr}</b>\n` : ``) +
-    `lat ${lat.toFixed(2)}  lon ${lon.toFixed(2)}   tile ${px | 0},${py | 0}\n` +
-    (spawned ? `${hpStr}inv: <b>${inv}</b>\n` : ``) +
-    `<b>WASD</b> move · <b>Shift</b> run · <b>G</b> gather · <b>R</b> attack · <b>E</b> dig · <b>F</b> trade` +
-    (bk ? ` · build <b>${bk}</b>` : ``) + ` · <b>+/-</b> zoom`;
+  const era = document.getElementById("era");
+  if (worldYear == null) era.textContent = "real Earth";
+  else era.innerHTML = `${worldEra} age · <b>${worldYear < 0 ? -worldYear + " BC" : worldYear + " AD"}</b>` +
+    (spawned ? `   online ${others.length + 1}` : "");
+  document.getElementById("pos").textContent =
+    `lat ${lat.toFixed(2)}  lon ${lon.toFixed(2)}  ·  tile ${px | 0},${py | 0}`;
+  const bar = document.getElementById("hpbar");
+  if (spawned && myHp != null) {
+    bar.style.display = "";
+    const pct = Math.max(0, Math.min(1, myHp / myMaxHp));
+    const fill = document.getElementById("hpfill");
+    fill.style.width = pct * 100 + "%";
+    fill.style.background = pct > 0.6 ? "#4caf50" : pct > 0.3 ? "#d4a017" : "#d9433a";
+    document.getElementById("hptext").textContent = `♥ ${myHp}/${myMaxHp}`;
+  } else bar.style.display = "none";
+  document.getElementById("vitals").textContent = spawned ? `${myInv.coin || 0} coin` : "";
+  const items = Object.entries(myInv).filter(([k]) => k !== "coin").map(([k, v]) => `${k} ${v}`);
+  document.getElementById("inv").textContent = spawned ? (items.join(" · ") || "(empty pack)") : "";
+  document.getElementById("builds").innerHTML = spawned && Object.keys(builds).length ?
+    "build " + Object.keys(builds).map((b, i) => `<b>${i + 1}</b>:${b}`).join("  ") : "";
 }
 
 function frame(t) {
@@ -295,6 +315,21 @@ addEventListener("keydown", (e) => {
     ws.send(JSON.stringify({ action: "build", kind: bk[+k - 1] }));
 });
 addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+
+// Minimap "look": click/drag the overview to pan the camera (detached from you
+// until you move) — mirrors the original game's minimap-to-look.
+function minimapLook(clientX, clientY) {
+  if (!mmRect || !man) return false;
+  const lx = clientX - mmRect.x, ly = clientY - mmRect.y;
+  if (lx < 0 || ly < 0 || lx > mmRect.w || ly > mmRect.h) return false;
+  camX = lx / mmRect.w * man.src_w;
+  camY = ly / mmRect.h * man.src_h;
+  followCam = false;
+  return true;
+}
+canvas.addEventListener("mousedown", (e) => { if (minimapLook(e.clientX, e.clientY)) mmDragging = true; });
+addEventListener("mousemove", (e) => { if (mmDragging) minimapLook(e.clientX, e.clientY); });
+addEventListener("mouseup", () => { mmDragging = false; });
 
 function spawnAt(c) {
   [px, py] = lonlatToTile(c.lon, c.lat);

@@ -8,9 +8,21 @@
     html, body { margin: 0; height: 100%; background: #05070d; overflow: hidden;
       font: 13px ui-monospace, monospace; color: #cdd6e6; }
     #view { display: block; image-rendering: pixelated; }
-    #hud { position: fixed; top: 10px; left: 10px; z-index: 5;
-      background: rgba(10, 12, 18, 0.82); padding: 8px 11px; border-radius: 6px;
-      white-space: pre; line-height: 1.55; pointer-events: none; }
+    #hud { position: fixed; top: 10px; left: 10px; z-index: 5; min-width: 210px;
+      background: rgba(10, 12, 18, 0.82); padding: 9px 12px; border-radius: 7px;
+      line-height: 1.5; pointer-events: none; }
+    #title { font-weight: 600; color: #fff; }
+    #era { color: #ffd86b; }
+    #pos { color: #7c8aa5; font-size: 11px; margin-bottom: 5px; }
+    #hpbar { position: relative; width: 200px; height: 16px; border-radius: 4px;
+      background: #25160f; border: 1px solid #3a2a20; overflow: hidden; margin: 3px 0; }
+    #hpfill { height: 100%; width: 100%; background: #4caf50; transition: width .2s, background .2s; }
+    #hptext { position: absolute; inset: 0; text-align: center; font-size: 11px;
+      line-height: 16px; color: #fff; text-shadow: 0 1px 1px #000; }
+    #vitals { color: #ffd86b; }
+    #inv { color: #8fd07a; font-size: 12px; }
+    #builds { color: #b9c4d8; font-size: 11px; }
+    #help { color: #6f7c93; font-size: 11px; margin-top: 5px; }
     b { color: #ffd86b; }
     #spawn { position: fixed; inset: 0; z-index: 20; display: none;
       align-items: center; justify-content: center; background: rgba(5, 7, 13, 0.78); }
@@ -33,7 +45,15 @@
   </style>
 </head>
 <body>
-  <div id="hud">loading…</div>
+  <div id="hud">
+    <div id="title">simhumanity — <span id="era">loading…</span></div>
+    <div id="pos"></div>
+    <div id="hpbar"><div id="hpfill"></div><div id="hptext"></div></div>
+    <div id="vitals"></div>
+    <div id="inv"></div>
+    <div id="builds"></div>
+    <div id="help">WASD move · Shift run · G gather · R attack · E dig · F trade · +/− zoom</div>
+  </div>
   <div id="log"></div>
   <div id="spawn"><div class="box">
     <h2>Choose where to begin</h2>
