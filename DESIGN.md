@@ -300,6 +300,15 @@ For the **real world map** (Roadmap), bake accurate coordinates in from the star
 
 ## Changelog
 
+- **2026-06-24** — **Feel/parity round + grid-lock.** Click-to-move; smooth NPC
+  wander (held heading); **populated resource nodes** (gatherable pips that deplete
+  & re-seed); **talk (F)** to wanderers (rumours) / merchants (sell); **weapons &
+  armour** auto-applied; **plans tech-tree** (learn build recipes by digging) with
+  a **build dropdown (B)**; **relics** as objects + panel (I); cities/sites **snap
+  onto land**; and **grid-locked movement** — player + NPCs + resources + structures
+  + cities are all **constrained to tile squares**, moving smoothly between and
+  always landing centred (positions are tile centres; player/NPCs tile-step).
+  Still open: site excavation quizzes, fog-of-war, quests, debug tools.
 - **2026-06-23 (j)** — **Parity pass on the three flagged areas: NPCs, HUD, minimap.**
   **NPCs** now match the test map: per-mob rolled hp/atk/speed (`_roll_speed`),
   **sea monsters live on water and only hunt boaters (shore is safe)**, separate
