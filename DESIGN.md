@@ -308,7 +308,9 @@ For the **real world map** (Roadmap), bake accurate coordinates in from the star
   onto land**; and **grid-locked movement** — player + NPCs + resources + structures
   + cities are all **constrained to tile squares**, moving smoothly between and
   always landing centred (positions are tile centres; player/NPCs tile-step).
-  Still open: site excavation quizzes, fog-of-war, quests, debug tools.
+  Then **site excavation quizzes** (dig a famous site → true/false claims → a relic
+  + renown + the site's lost build plan) and **fog of war** (see a radius around
+  you; explored ground stays dimly known; toggle O). Still open: quests, debug tools.
 - **2026-06-23 (j)** — **Parity pass on the three flagged areas: NPCs, HUD, minimap.**
   **NPCs** now match the test map: per-mob rolled hp/atk/speed (`_roll_speed`),
   **sea monsters live on water and only hunt boaters (shore is safe)**, separate
