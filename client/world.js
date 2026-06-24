@@ -27,7 +27,7 @@ let myInv = {}, myPlans = [], myRelics = [], structures = [], ruins = []; // inv
 let worldYear = null, worldEra = "";                     // era clock
 let npcs = [], myHp = null, myMaxHp = null;              // NPCs + combat
 let cities = [], sites = [], resourceNodes = [];        // cities, sites, gatherable nodes
-let moveTarget = null;                                  // click-to-move destination
+let moveTarget = null, stepTo = null;                   // click-to-move dest / current tile step
 const terrainCache = new Map();                          // chunk -> ImageData (land/water)
 let toastT = 0;
 function toast(text) {
@@ -118,44 +118,64 @@ function isWaterTile(tx, ty) {  // water == the rendered sea-blue (matches the m
   return B > R + 20 && B > G && B > 100;
 }
 
+function pickWalkStep(cx, cy, sdx, sdy) {  // adjacent walkable tile (diagonal, then axes)
+  const boat = (myInv.boat || 0) > 0;
+  for (const [ax, ay] of [[sdx, sdy], [sdx, 0], [0, sdy]]) {
+    if (!ax && !ay) continue;
+    const tx = ((cx + ax) % man.src_w + man.src_w) % man.src_w, ty = cy + ay;
+    if (ty < 0 || ty >= man.src_h) continue;
+    if (boat || !isWaterTile(tx + 0.5, ty + 0.5)) return { tx, ty };
+  }
+  return null;
+}
+
 function viewRect() { // visible area in global tiles (centred on the camera)
   const hw = canvas.width / 2 / TILE, hh = canvas.height / 2 / TILE;
   return { x0: camX - hw, y0: camY - hh, x1: camX + hw, y1: camY + hh };
 }
 
 function update(dt) {
-  if (spawned) {  // movement (Shift = run); realistic scale, "game-fast" for the demo
+  if (spawned) {  // grid-locked: step tile-to-tile, always landing on a tile centre
     const onWater = (myInv.boat || 0) > 0 && isWaterTile(px, py);
-    const sp = 14 * (keys.has("shift") ? 60 : 1) * (onWater ? 0.5 : 1) * dt; // boats are slow
-    let dx = 0, dy = 0;
-    if (keys.has("w") || keys.has("arrowup")) dy -= 1;
-    if (keys.has("s") || keys.has("arrowdown")) dy += 1;
-    if (keys.has("a") || keys.has("arrowleft")) dx -= 1;
-    if (keys.has("d") || keys.has("arrowright")) dx += 1;
-    let step = sp;
-    if (dx || dy) moveTarget = null;             // WASD cancels click-to-move
-    else if (moveTarget) {                        // head for the clicked tile
-      let tdx = moveTarget.x - px, tdy = moveTarget.y - py;
+    let budget = 14 * (keys.has("shift") ? 60 : 1) * (onWater ? 0.5 : 1) * dt; // tiles this frame
+    let wdx = 0, wdy = 0;
+    if (keys.has("w") || keys.has("arrowup")) wdy -= 1;
+    if (keys.has("s") || keys.has("arrowdown")) wdy += 1;
+    if (keys.has("a") || keys.has("arrowleft")) wdx -= 1;
+    if (keys.has("d") || keys.has("arrowright")) wdx += 1;
+    if (wdx || wdy) moveTarget = null;  // WASD cancels click-to-move
+    let guard = 0;
+    while (budget > 1e-6 && guard++ < 400) {
+      if (!stepTo) {  // at a tile centre — choose the next tile to step onto
+        const cx = Math.floor(px), cy = Math.floor(py);
+        let sdx = wdx, sdy = wdy;
+        if (!sdx && !sdy && moveTarget) {
+          const mtx = Math.floor(moveTarget.x), mty = Math.floor(moveTarget.y);
+          let ddx = mtx - cx;
+          if (ddx > man.src_w / 2) ddx -= man.src_w; else if (ddx < -man.src_w / 2) ddx += man.src_w;
+          if (!ddx && mty === cy) moveTarget = null;
+          else { sdx = Math.sign(ddx); sdy = Math.sign(mty - cy); }
+        }
+        const s = (sdx || sdy) ? pickWalkStep(cx, cy, sdx, sdy) : null;
+        if (!s) { if (moveTarget) moveTarget = null; break; }
+        stepTo = { x: s.tx + 0.5, y: s.ty + 0.5 };
+        followCam = true;
+      }
+      let tdx = stepTo.x - px, tdy = stepTo.y - py;
       if (tdx > man.src_w / 2) tdx -= man.src_w; else if (tdx < -man.src_w / 2) tdx += man.src_w;
       const dist = Math.hypot(tdx, tdy);
-      if (dist < 0.6) moveTarget = null;
-      else { dx = tdx; dy = tdy; step = Math.min(sp, dist); }  // never overshoot → no jitter
-    }
-    if (dx || dy) {
-      followCam = true;  // moving snaps the camera back to you
-      const opx = px, opy = py;
-      const m = Math.hypot(dx, dy) || 1;
-      let nx = ((px + dx / m * step) % man.src_w + man.src_w) % man.src_w;  // wrap E/W
-      let ny = Math.max(0, Math.min(man.src_h - 1, py + dy / m * step));    // poles = wall
-      const boat = (myInv.boat || 0) > 0;                   // a boat crosses water
-      if (boat || !isWaterTile(nx, ny)) { px = nx; py = ny; }
-      else { if (!isWaterTile(nx, py)) px = nx; if (!isWaterTile(px, ny)) py = ny; }
-      if (moveTarget && px === opx && py === opy) moveTarget = null;  // blocked → stop
+      if (dist <= budget) {
+        px = ((stepTo.x % man.src_w) + man.src_w) % man.src_w; py = stepTo.y;
+        budget -= dist; stepTo = null;
+      } else {
+        px = ((px + tdx / dist * budget) % man.src_w + man.src_w) % man.src_w;
+        py += tdy / dist * budget; budget = 0;
+      }
     }
   }
   if (followCam) { camX = px; camY = py; }  // else the minimap "look" holds the camera
   if (spawned && ws && ws.readyState === 1 && performance.now() - lastSent > 150) {
-    ws.send(JSON.stringify({ action: "move", x: Math.round(px), y: Math.round(py) }));
+    ws.send(JSON.stringify({ action: "move", x: Math.round(px * 10) / 10, y: Math.round(py * 10) / 10 }));
     lastSent = performance.now();
   }
   // load the chunks covering the view plus a one-chunk margin
@@ -394,6 +414,7 @@ addEventListener("mouseup", () => { mmDragging = false; });
 
 function spawnAt(c) {
   [px, py] = lonlatToTile(c.lon, c.lat);
+  px = Math.floor(px) + 0.5; py = Math.floor(py) + 0.5;  // tile-centred
   spawned = true;
   document.getElementById("spawn").style.display = "none";
   connectWorld(c.name);
@@ -436,7 +457,10 @@ function connectWorld(city) {  // multiplayer presence over /world/ws
 function loadSpawns() {  // cities of the age — pick one to begin
   fetch("/world/spawns").then((r) => r.json()).then((d) => {
     spawnCities = d.spawns || [];
-    if (spawnCities.length) [px, py] = lonlatToTile(spawnCities[0].lon, spawnCities[0].lat);
+    if (spawnCities.length) {
+      [px, py] = lonlatToTile(spawnCities[0].lon, spawnCities[0].lat);
+      px = Math.floor(px) + 0.5; py = Math.floor(py) + 0.5;
+    }
     const era = d.year < 0 ? `${-d.year} BC` : `${d.year} AD`;
     document.getElementById("spawnEra").textContent = `Cities of the age — ${era}`;
     const list = document.getElementById("spawnList");

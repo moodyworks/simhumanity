@@ -99,6 +99,7 @@ class NPC:
     cd: float = 0.0            # attack cooldown (s)
     head: float = 0.0         # wander heading (rad), kept across ticks (no jitter)
     line: str = ""            # what a wanderer/merchant says when you talk
+    dest: tuple | None = None  # tile centre currently stepping toward (grid-locked)
 
 
 @dataclass
@@ -199,20 +200,50 @@ class WorldGame:
         return int(x), int(y)
 
     # --- NPCs + combat ------------------------------------------------------
-    def _step(self, n: NPC, dx: float, dy: float, dist: float, terrain) -> bool:
-        nx = (n.x + dx * dist) % terrain.W
-        ny = min(terrain.H - 1, max(0.0, n.y + dy * dist))
-        if terrain.is_water(nx, ny) == n.water:  # stay on your own medium
-            n.x, n.y = nx, ny
+    def _advance(self, n: NPC, dt: float, terrain) -> bool:
+        """Move toward n.dest (a tile centre), snapping on arrival. Returns True when
+        idle (no dest / just arrived) so the caller can choose the next tile step."""
+        if n.dest is None:
             return True
+        dx, dy = n.dest[0] - n.x, n.dest[1] - n.y
+        if dx > terrain.W / 2:
+            dx -= terrain.W
+        elif dx < -terrain.W / 2:
+            dx += terrain.W
+        d = math.hypot(dx, dy)
+        step = n.speed * dt
+        if d <= step or d < 1e-6:
+            n.x, n.y, n.dest = n.dest[0] % terrain.W, n.dest[1], None
+            return True
+        n.x = (n.x + dx / d * step) % terrain.W
+        n.y += dy / d * step
+        return False
+
+    def _set_step(self, n: NPC, sdx: int, sdy: int, terrain) -> bool:
+        """Aim n.dest at an adjacent tile centre (diagonal then axis fallbacks) if
+        it's on this mob's medium and in bounds."""
+        cx, cy = math.floor(n.x), math.floor(n.y)
+        for ax, ay in ((sdx, sdy), (sdx, 0), (0, sdy)):
+            if not ax and not ay:
+                continue
+            tx, ty = (cx + ax) % terrain.W, cy + ay
+            if 0 <= ty < terrain.H and terrain.is_water(tx + 0.5, ty + 0.5) == n.water:
+                n.dest = (tx + 0.5, ty + 0.5)
+                return True
         return False
 
     def _wander(self, n: NPC, dt: float, terrain) -> None:
-        """Smooth idle drift: hold a heading, re-pick only occasionally or when
-        blocked — so mobs meander instead of jittering every tick."""
-        moved = self._step(n, math.cos(n.head), math.sin(n.head), n.speed * dt * 0.35, terrain)
-        if not moved or random.random() < 0.03:
-            n.head = random.random() * math.tau
+        """Tile-step meander: hold a heading, step tile-to-tile, turn when blocked."""
+        if self._advance(n, dt, terrain):  # at a tile centre — choose the next step
+            if random.random() < 0.12:
+                n.head = random.random() * math.tau
+            sdx, sdy = round(math.cos(n.head)), round(math.sin(n.head))
+            if not sdx and not sdy:
+                sdx = 1
+            if self._set_step(n, sdx, sdy, terrain):
+                self._advance(n, dt, terrain)
+            else:
+                n.head = random.random() * math.tau
 
     def _spawn_near(self, p: WorldPlayer, terrain) -> None:
         rng = random
@@ -231,14 +262,15 @@ class WorldGame:
                     else rng.choice(WANDERER_LINES) if kind == "wanderer" else "")
             self._nid += 1
             self.npcs[self._nid] = NPC(
-                self._nid, kind, name, x, y, hp, hp,
+                self._nid, kind, name, int(x) + 0.5, int(y) + 0.5, hp, hp,
                 atk=rng.randint(*spec["atk"]) if spec["atk"] else 0,
                 spot=spec["spot"], speed=_roll_speed(rng, spec["speed"]),
                 water=spec["water"], head=rng.random() * math.tau, line=line)
             return
 
     def _respawn(self, p: WorldPlayer) -> None:
-        p.hp, p.x, p.y = p.max_hp, p.sx, p.sy
+        p.hp = p.max_hp
+        p.x, p.y = int(p.sx) + 0.5, int(p.sy) + 0.5  # back to your city, tile-centred
         for k in list(p.inv):
             p.inv[k] //= 2  # lose half your goods when slain
         self.events.append({"pid": p.pid, "kind": "respawn", "x": p.x, "y": p.y, "hp": p.hp})
@@ -260,15 +292,24 @@ class WorldGame:
         if tgt is None:
             self._wander(n, dt, terrain)
             return
-        d = math.hypot(tgt.x - n.x, tgt.y - n.y) or 1.0
+        ddx = tgt.x - n.x
+        if ddx > terrain.W / 2:
+            ddx -= terrain.W
+        elif ddx < -terrain.W / 2:
+            ddx += terrain.W
+        d = math.hypot(ddx, tgt.y - n.y)
         if d <= ATTACK_RANGE:
+            n.dest = None
             if n.cd <= 0:
                 tgt.hp -= max(1, n.atk - best_armour(tgt.inv))  # armour soaks the blow
                 n.cd = 1.0
                 if tgt.hp <= 0:
                     self._respawn(tgt)
-        else:
-            self._step(n, (tgt.x - n.x) / d, (tgt.y - n.y) / d, n.speed * dt, terrain)
+        elif self._advance(n, dt, terrain):  # at a tile — step one tile toward target
+            sdx = 0 if abs(ddx) < 0.6 else (1 if ddx > 0 else -1)
+            sdy = 0 if abs(tgt.y - n.y) < 0.6 else (1 if tgt.y > n.y else -1)
+            self._set_step(n, sdx, sdy, terrain)
+            self._advance(n, dt, terrain)
 
     def _update_npcs(self, dt: float, terrain) -> None:
         players = list(self.players.values())
@@ -329,7 +370,7 @@ class WorldGame:
         p = self.players.get(pid)
         if not p:
             return {"status": "none"}
-        key = (round(p.x), round(p.y))
+        key = (int(p.x), int(p.y))
         ruin = self.ruins.get(key)
         if not ruin:
             return {"status": "nothing"}
@@ -429,8 +470,9 @@ class WorldGame:
                 continue
             kind = terrain.resource_at(x, y)
             if kind:
-                self._rid += 1
-                self.resources[self._rid] = ResourceNode(self._rid, kind, x, y, RESOURCE_AMOUNT)
+                self._rid += 1  # snap nodes to tile centres
+                self.resources[self._rid] = ResourceNode(
+                    self._rid, kind, int(x) + 0.5, int(y) + 0.5, RESOURCE_AMOUNT)
                 return
 
     def talk(self, pid: str) -> dict | None:
@@ -473,7 +515,7 @@ class WorldGame:
                 p.inv[k] -= v
             p.inv["boat"] = p.inv.get("boat", 0) + 1
             return "boat"
-        tx, ty = round(p.x), round(p.y)
+        tx, ty = int(p.x), int(p.y)
         if terrain.is_water(tx, ty):
             return "water"
         if (tx, ty) in self.structures:
@@ -490,9 +532,9 @@ class WorldGame:
             "players": [{"pid": p.pid, "name": p.name, "x": round(p.x, 1),
                          "y": round(p.y, 1), "city": p.city, "hp": p.hp, "max_hp": p.max_hp}
                         for p in self.players.values()],
-            "structures": [{"x": x, "y": y, "kind": s["kind"]}
+            "structures": [{"x": x + 0.5, "y": y + 0.5, "kind": s["kind"]}
                            for (x, y), s in self.structures.items()],
-            "ruins": [{"x": x, "y": y, "kind": r["kind"]}
+            "ruins": [{"x": x + 0.5, "y": y + 0.5, "kind": r["kind"]}
                       for (x, y), r in self.ruins.items()],
             "npcs": [{"id": n.nid, "kind": n.kind, "name": n.name,
                       "x": round(n.x, 1), "y": round(n.y, 1), "hp": n.hp,
@@ -503,12 +545,12 @@ class WorldGame:
             # real cities rising/falling on their timeline, and the famous ancient
             # sites once they've been founded — the world's living history
             "cities": [{"name": c["name"], "stage": st,
-                        "x": (cxy := self._place(c["name"], c["lon"], c["lat"], self._city_xy))[0],
-                        "y": cxy[1]}
+                        "x": (cxy := self._place(c["name"], c["lon"], c["lat"], self._city_xy))[0] + 0.5,
+                        "y": cxy[1] + 0.5}
                        for c in CITIES if (st := city_stage(c["timeline"], yr)) > 0],
             "sites": [{"name": s["name"],
-                       "x": (sxy := self._place(s["name"], s["lon"], s["lat"], self._site_xy))[0],
-                       "y": sxy[1]}
+                       "x": (sxy := self._place(s["name"], s["lon"], s["lat"], self._site_xy))[0] + 0.5,
+                       "y": sxy[1] + 0.5}
                       for s in SITES if yr >= founded_year(s["era"])],
             "year": yr,
             "era": self.era_name(),
