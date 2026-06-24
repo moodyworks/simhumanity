@@ -25,6 +25,8 @@ let spawnCities = [];      // cities of the age — the spawn options
 let ws = null, myPid = null, others = [], lastSent = 0;  // multiplayer presence
 let myInv = {}, myPlans = [], myRelics = [], structures = [], ruins = []; // inv / plans / relics / builds
 let myRenown = 0;                                       // scholar's renown from site digs
+const VISION = 11;                                      // fog-of-war sight radius (tiles)
+let explored = new Set(), exTileX = null, exTileY = null, fogOn = true;
 let worldYear = null, worldEra = "";                     // era clock
 let npcs = [], myHp = null, myMaxHp = null;              // NPCs + combat
 let cities = [], sites = [], resourceNodes = [];        // cities, sites, gatherable nodes
@@ -175,6 +177,49 @@ function pickWalkStep(cx, cy, sdx, sdy) {  // adjacent walkable tile (diagonal, 
   return null;
 }
 
+// --- fog of war: you see a radius around you; explored ground stays dimly known ---
+function markExplored() {
+  if (!man || !spawned) return;
+  const cx = Math.floor(px), cy = Math.floor(py);
+  if (cx === exTileX && cy === exTileY) return;  // only when you cross into a new tile
+  exTileX = cx; exTileY = cy;
+  for (let dy = -VISION; dy <= VISION; dy++) {
+    const wy = cy + dy; if (wy < 0 || wy >= man.src_h) continue;
+    for (let dx = -VISION; dx <= VISION; dx++) {
+      if (dx * dx + dy * dy > VISION * VISION) continue;
+      explored.add((((cx + dx) % man.src_w) + man.src_w) % man.src_w + "," + wy);
+    }
+  }
+}
+function inVision(wx, wy) {
+  let ddx = wx - px;
+  if (ddx > man.src_w / 2) ddx -= man.src_w; else if (ddx < -man.src_w / 2) ddx += man.src_w;
+  return ddx * ddx + (wy - py) * (wy - py) <= VISION * VISION;
+}
+const fogActive = () => fogOn && TILE >= 8 && spawned;
+function hideDyn(wx, wy) { return fogActive() && !inVision(wx, wy); }  // mobs/items: sight only
+function hideStat(wx, wy) {  // landmarks: sight or remembered
+  return fogActive() && !inVision(wx, wy) &&
+    !explored.has(Math.floor(wx) + "," + Math.floor(wy));
+}
+function drawFog(offX, offY) {
+  if (!fogActive()) return;
+  const pcx = Math.floor(px), pcy = Math.floor(py);
+  const x0 = Math.floor(-offX / TILE) - 1, x1 = Math.ceil((canvas.width - offX) / TILE) + 1;
+  const y0 = Math.max(0, Math.floor(-offY / TILE) - 1);
+  const y1 = Math.min(man.src_h, Math.ceil((canvas.height - offY) / TILE) + 1);
+  for (let wy = y0; wy < y1; wy++) {
+    for (let wx = x0; wx < x1; wx++) {
+      const twx = ((wx % man.src_w) + man.src_w) % man.src_w;
+      let ddx = twx - pcx;
+      if (ddx > man.src_w / 2) ddx -= man.src_w; else if (ddx < -man.src_w / 2) ddx += man.src_w;
+      if (ddx * ddx + (wy - pcy) * (wy - pcy) <= VISION * VISION) continue;  // in sight
+      ctx.fillStyle = explored.has(twx + "," + wy) ? "rgba(3,5,11,0.5)" : "rgba(3,5,11,0.96)";
+      ctx.fillRect(offX + wx * TILE, offY + wy * TILE, TILE + 1, TILE + 1);
+    }
+  }
+}
+
 function viewRect() { // visible area in global tiles (centred on the camera)
   const hw = canvas.width / 2 / TILE, hh = canvas.height / 2 / TILE;
   return { x0: camX - hw, y0: camY - hh, x1: camX + hw, y1: camY + hh };
@@ -238,6 +283,7 @@ function render() {
   // snap the camera to whole pixels so adjacent chunks share an exact edge
   // (fractional offsets leave hairline seams between tiles).
   const offX = Math.round(canvas.width / 2 - camX * TILE), offY = Math.round(canvas.height / 2 - camY * TILE);
+  markExplored();
   const v = viewRect();
   for (let r = Math.floor(v.y0 / cp); r <= Math.floor(v.y1 / cp); r++) {
     if (r < 0 || r >= man.rows) continue;                   // beyond the poles = void
@@ -253,9 +299,11 @@ function render() {
                     offX + ix0 * TILE, offY + iy0 * TILE, (ix1 - ix0) * TILE, (iy1 - iy0) * TILE);
     }
   }
+  drawFog(offX, offY);  // darken everything beyond sight (explored ground stays dim)
   // resource nodes (gatherable) — small coloured pips
   const resColor = { wood: "#4f7a36", stone: "#9a9a9a", food: "#d9c24a", fish: "#58b0d6", ore: "#c0813f" };
   for (const nd of resourceNodes) {
+    if (hideDyn(nd.x, nd.y)) continue;
     let ox = nd.x; const d = ox - camX;
     if (d > man.src_w / 2) ox -= man.src_w; else if (d < -man.src_w / 2) ox += man.src_w;
     const sx = offX + ox * TILE, sy = offY + nd.y * TILE;
@@ -267,6 +315,7 @@ function render() {
 
   // ancient sites (date-gated) — gold diamonds
   for (const s of sites) {
+    if (hideStat(s.x, s.y)) continue;
     let ox = s.x; const dd = ox - camX;
     if (dd > man.src_w / 2) ox -= man.src_w; else if (dd < -man.src_w / 2) ox += man.src_w;
     const sx = offX + ox * TILE, sy = offY + s.y * TILE, r = TILE * 0.6;
@@ -280,6 +329,7 @@ function render() {
   // historical cities, sized by their current era stage
   const sizeName = ["", "hamlet", "town", "city", "metropolis"];
   for (const c of cities) {
+    if (hideStat(c.x, c.y)) continue;
     let ox = c.x; const dd = ox - camX;
     if (dd > man.src_w / 2) ox -= man.src_w; else if (dd < -man.src_w / 2) ox += man.src_w;
     const sx = offX + ox * TILE, sy = offY + c.y * TILE;
@@ -293,6 +343,7 @@ function render() {
 
   // built structures
   for (const s of structures) {
+    if (hideStat(s.x, s.y)) continue;
     let ox = s.x; const d = ox - camX;
     if (d > man.src_w / 2) ox -= man.src_w; else if (d < -man.src_w / 2) ox += man.src_w;
     const sx = offX + ox * TILE, sy = offY + s.y * TILE;
@@ -303,6 +354,7 @@ function render() {
 
   // ruins (decayed past-era structures — dig sites; press E on one)
   for (const s of ruins) {
+    if (hideStat(s.x, s.y)) continue;
     let ox = s.x; const d = ox - camX;
     if (d > man.src_w / 2) ox -= man.src_w; else if (d < -man.src_w / 2) ox += man.src_w;
     const sx = offX + ox * TILE, sy = offY + s.y * TILE;
@@ -314,6 +366,7 @@ function render() {
   // NPCs (wander / hunt around you) — name, HP bar, hostile outline
   const npcColor = { wanderer: "#9aa3b0", merchant: "#6fd0c8", brigand: "#e08a3a", monster: "#d24a6a" };
   for (const n of npcs) {
+    if (hideDyn(n.x, n.y)) continue;
     let ox = n.x; const d = ox - camX;
     if (d > man.src_w / 2) ox -= man.src_w; else if (d < -man.src_w / 2) ox += man.src_w;
     const sx = offX + ox * TILE, sy = offY + n.y * TILE, rr = TILE * 0.42;
@@ -334,6 +387,7 @@ function render() {
 
   // other players (multiplayer presence) — drawn at the nearest wrap of their x
   for (const p of others) {
+    if (hideDyn(p.x, p.y)) continue;
     let ox = p.x; const d = ox - camX;
     if (d > man.src_w / 2) ox -= man.src_w; else if (d < -man.src_w / 2) ox += man.src_w;
     const sx = offX + ox * TILE, sy = offY + p.y * TILE;
@@ -432,6 +486,7 @@ addEventListener("keydown", (e) => {
   if (k === "f") ws.send(JSON.stringify({ action: "talk" }));
   if (k === "i") toggleRelics();
   if (k === "b") toggleBuild();
+  if (k === "o") fogOn = !fogOn;  // toggle fog of war
   if (/^[1-9]$/.test(k) && myPlans[+k - 1])   // 1..N build the plans you know
     ws.send(JSON.stringify({ action: "build", kind: myPlans[+k - 1].type }));
 });
