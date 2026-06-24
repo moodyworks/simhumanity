@@ -94,7 +94,8 @@ function viewRect() { // visible area in global tiles
 
 function update(dt) {
   if (spawned) {  // movement (Shift = run); realistic scale, "game-fast" for the demo
-    const sp = 14 * (keys.has("shift") ? 60 : 1) * dt; // tiles/sec (10x run)
+    const onWater = (myInv.boat || 0) > 0 && isWaterTile(px, py);
+    const sp = 14 * (keys.has("shift") ? 60 : 1) * (onWater ? 0.5 : 1) * dt; // boats are slow
     let dx = 0, dy = 0;
     if (keys.has("w") || keys.has("arrowup")) dy -= 1;
     if (keys.has("s") || keys.has("arrowdown")) dy += 1;
@@ -188,16 +189,25 @@ function render() {
     ctx.strokeStyle = "#241c10"; ctx.lineWidth = 1; ctx.strokeRect(sx - TILE / 2, sy - TILE / 2, TILE, TILE);
   }
 
-  // NPCs (wander / chase around you)
+  // NPCs (wander / hunt around you) — name, HP bar, hostile outline
   const npcColor = { wanderer: "#9aa3b0", merchant: "#6fd0c8", brigand: "#e08a3a", monster: "#d24a6a" };
   for (const n of npcs) {
     let ox = n.x; const d = ox - px;
     if (d > man.src_w / 2) ox -= man.src_w; else if (d < -man.src_w / 2) ox += man.src_w;
-    const sx = offX + ox * TILE, sy = offY + n.y * TILE;
-    if (sx < -TILE || sy < -TILE || sx > canvas.width || sy > canvas.height) continue;
+    const sx = offX + ox * TILE, sy = offY + n.y * TILE, rr = TILE * 0.42;
+    if (sx < -TILE * 2 || sy < -TILE * 2 || sx > canvas.width + TILE || sy > canvas.height + TILE) continue;
     ctx.fillStyle = npcColor[n.kind] || "#aaa";
-    ctx.beginPath(); ctx.arc(sx, sy, TILE * 0.42, 0, 7); ctx.fill();
-    ctx.strokeStyle = "#000"; ctx.lineWidth = 1; ctx.stroke();
+    ctx.beginPath(); ctx.arc(sx, sy, rr, 0, 7); ctx.fill();
+    ctx.lineWidth = n.hostile ? 2.5 : 1; ctx.strokeStyle = n.hostile ? "#ff2a2a" : "#000"; ctx.stroke();
+    if (n.hp < n.max_hp) {
+      const bw = TILE * 0.9;
+      ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(sx - bw / 2, sy - rr - 6, bw, 3);
+      ctx.fillStyle = "#5bd64a"; ctx.fillRect(sx - bw / 2, sy - rr - 6, bw * n.hp / n.max_hp, 3);
+    }
+    if (TILE >= 16 || n.hostile) {
+      ctx.fillStyle = "#dfe6f0"; ctx.font = "10px ui-monospace, monospace"; ctx.textAlign = "center";
+      ctx.fillText(n.name, sx, sy - rr - 9); ctx.textAlign = "left";
+    }
   }
 
   // other players (multiplayer presence) — drawn at the nearest wrap of their x

@@ -13,24 +13,31 @@ import random
 import time
 from dataclasses import dataclass, field
 
+from . import economy
 from .cities import CITIES, city_stage
+from .entities import (BRIGAND_NAMES, MONSTER_NAMES, _FIRST, _roll_speed)
 from .landmarks import SITES, founded_year
 from .world import ERA_DATES, ERA_ORDER
 
-# NPCs spawn around players (the world is too big to simulate globally).
+# NPCs spawn around players (the world is too big to simulate globally). Stats are
+# rolled per mob (ranges) to match the test-map game's variety. Sea **monsters**
+# live on the water and only threaten boaters; the shore is safe.
 NPC_KINDS = {
-    "wanderer": {"hp": 6, "speed": 9, "chase": False, "dmg": 0, "loot": {"food": 1}},
-    "merchant": {"hp": 8, "speed": 7, "chase": False, "dmg": 0, "loot": {"food": 2}},
-    "brigand": {"hp": 10, "speed": 13, "chase": True, "dmg": 2, "loot": {"artifact": 1}},
-    "monster": {"hp": 14, "speed": 16, "chase": True, "dmg": 3, "loot": {"artifact": 1, "stone": 1}},
+    "wanderer": {"hp": (18, 24), "atk": 0,       "spot": 0, "speed": 6,  "water": False},
+    "merchant": {"hp": (18, 22), "atk": 0,       "spot": 0, "speed": 5,  "water": False},
+    "brigand":  {"hp": (16, 28), "atk": (4, 8),  "spot": 8, "speed": 14, "water": False,
+                 "coin": (3, 12), "relic": economy.RELIC_DROP_CHANCE},
+    "monster":  {"hp": (40, 75), "atk": (8, 15), "spot": 9, "speed": 9,  "water": True,
+                 "coin": (10, 30), "relic": economy.MONSTER_RELIC_CHANCE},
 }
 SPAWN_KINDS, SPAWN_W = zip(("wanderer", 4), ("merchant", 2), ("brigand", 3), ("monster", 2))
-VISION = 18          # tiles a chaser sees/aggros within
 NEAR = 100           # keep/spawn NPCs within this of a player
+LEASH = 14           # a hunter gives up if its target gets this far (or leaves its medium)
 MAX_PER_PLAYER = 6
-ATTACK_RANGE = 2.5   # melee reach (player <-> NPC)
-PLAYER_DMG = 4
+ATTACK_RANGE = 2.0   # melee reach (player <-> NPC)
+PLAYER_DMG = 6
 PLAYER_HP = 20
+WATER_SPEED = 0.5    # a boat moves at half pace (so sea monsters can catch you)
 
 START_YEAR = -2000  # the spawn era (matches the spawn-city picker default)
 YEARS_PER_SEC = float(os.environ.get("WORLD_YEARS_PER_SEC", "4"))
@@ -58,10 +65,17 @@ TRADE_RANGE = 4.0
 class NPC:
     nid: int
     kind: str
+    name: str
     x: float
     y: float
     hp: int
-    cd: float = 0.0  # attack cooldown (s)
+    max_hp: int
+    atk: int = 0
+    spot: int = 0
+    speed: float = 8.0
+    water: bool = False        # lives on water (sea monster) vs land
+    target: str | None = None  # pid being hunted
+    cd: float = 0.0            # attack cooldown (s)
 
 
 @dataclass
@@ -113,31 +127,65 @@ class WorldGame:
             self._update_npcs(dt, terrain)
 
     # --- NPCs + combat ------------------------------------------------------
-    def _nearest_player(self, n: NPC):
-        return min(self.players.values(),
-                   key=lambda p: math.hypot(p.x - n.x, p.y - n.y), default=None)
-
     def _step(self, n: NPC, dx: float, dy: float, dist: float, terrain) -> None:
         nx = (n.x + dx * dist) % terrain.W
-        ny = min(terrain.H - 1, max(0, n.y + dy * dist))
-        if not terrain.is_water(nx, ny):
+        ny = min(terrain.H - 1, max(0.0, n.y + dy * dist))
+        if terrain.is_water(nx, ny) == n.water:  # stay on your own medium
             n.x, n.y = nx, ny
 
     def _spawn_near(self, p: WorldPlayer, terrain) -> None:
+        rng = random
+        kind = rng.choices(SPAWN_KINDS, SPAWN_W)[0]
+        spec = NPC_KINDS[kind]
         for _ in range(8):
-            a, r = random.random() * math.tau, 30 + random.random() * (NEAR - 30)
+            a, r = rng.random() * math.tau, 30 + rng.random() * (NEAR - 30)
             x, y = (p.x + math.cos(a) * r) % terrain.W, p.y + math.sin(a) * r
-            if 0 <= y < terrain.H and not terrain.is_water(x, y):
-                kind = random.choices(SPAWN_KINDS, SPAWN_W)[0]
-                self._nid += 1
-                self.npcs[self._nid] = NPC(self._nid, kind, x, y, NPC_KINDS[kind]["hp"])
-                return
+            if not (0 <= y < terrain.H) or terrain.is_water(x, y) != spec["water"]:
+                continue  # sea beasts on water, land mobs on land
+            hp = rng.randint(*spec["hp"])
+            name = (rng.choice(BRIGAND_NAMES) if kind == "brigand"
+                    else rng.choice(MONSTER_NAMES) if kind == "monster"
+                    else rng.choice(_FIRST) + (" the Trader" if kind == "merchant" else ""))
+            self._nid += 1
+            self.npcs[self._nid] = NPC(
+                self._nid, kind, name, x, y, hp, hp,
+                atk=rng.randint(*spec["atk"]) if spec["atk"] else 0,
+                spot=spec["spot"], speed=_roll_speed(rng, spec["speed"]), water=spec["water"])
+            return
 
     def _respawn(self, p: WorldPlayer) -> None:
         p.hp, p.x, p.y = p.max_hp, p.sx, p.sy
         for k in list(p.inv):
             p.inv[k] //= 2  # lose half your goods when slain
         self.events.append({"pid": p.pid, "kind": "respawn", "x": p.x, "y": p.y, "hp": p.hp})
+
+    def _eligible(self, n: NPC, p: WorldPlayer, terrain) -> bool:
+        """A sea monster only hunts players on the water (the shore is safe); a land
+        hunter only hunts players on land."""
+        return terrain.is_water(p.x, p.y) == n.water
+
+    def _hunt(self, n: NPC, dt: float, terrain) -> None:
+        tgt = self.players.get(n.target) if n.target else None
+        if (tgt is None or math.hypot(tgt.x - n.x, tgt.y - n.y) > LEASH
+                or not self._eligible(n, tgt, terrain)):
+            n.target = None  # lost the trail — re-acquire within spot range
+            tgt = min((p for p in self.players.values() if self._eligible(n, p, terrain)
+                       and math.hypot(p.x - n.x, p.y - n.y) <= n.spot),
+                      key=lambda p: math.hypot(p.x - n.x, p.y - n.y), default=None)
+            n.target = tgt.pid if tgt else None
+        if tgt is None:
+            a = random.random() * math.tau
+            self._step(n, math.cos(a), math.sin(a), n.speed * dt * 0.5, terrain)
+            return
+        d = math.hypot(tgt.x - n.x, tgt.y - n.y) or 1.0
+        if d <= ATTACK_RANGE:
+            if n.cd <= 0:
+                tgt.hp -= n.atk
+                n.cd = 1.0
+                if tgt.hp <= 0:
+                    self._respawn(tgt)
+        else:
+            self._step(n, (tgt.x - n.x) / d, (tgt.y - n.y) / d, n.speed * dt, terrain)
 
     def _update_npcs(self, dt: float, terrain) -> None:
         players = list(self.players.values())
@@ -154,24 +202,15 @@ class WorldGame:
                 self._spawn_near(p, terrain)
         for n in self.npcs.values():
             n.cd = max(0.0, n.cd - dt)
-            spec = NPC_KINDS[n.kind]
-            tgt = self._nearest_player(n) if spec["chase"] else None
-            d = math.hypot(tgt.x - n.x, tgt.y - n.y) if tgt else 1e9
-            if tgt and d < VISION:
-                if d <= ATTACK_RANGE:
-                    if n.cd <= 0 and spec["dmg"]:
-                        tgt.hp -= spec["dmg"]
-                        n.cd = 1.0
-                        if tgt.hp <= 0:
-                            self._respawn(tgt)
-                else:
-                    self._step(n, (tgt.x - n.x) / d, (tgt.y - n.y) / d, spec["speed"] * dt, terrain)
-            else:  # idle wander
+            if n.atk:  # a hunter (brigand / sea monster)
+                self._hunt(n, dt, terrain)
+            else:      # wanderer / merchant — idle drift
                 a = random.random() * math.tau
-                self._step(n, math.cos(a), math.sin(a), spec["speed"] * dt * 0.4, terrain)
+                self._step(n, math.cos(a), math.sin(a), n.speed * dt * 0.4, terrain)
 
     def attack(self, pid: str) -> str | None:
-        """Strike the nearest NPC in melee reach; killing it drops loot."""
+        """Strike the nearest NPC in reach; a kill drops coin + weighted goods + a
+        chance of a relic. Hitting a hunter makes it turn on you."""
         p = self.players.get(pid)
         if not p:
             return None
@@ -182,13 +221,24 @@ class WorldGame:
                 best, bd = n, d
         if not best:
             return None
-        best.hp -= PLAYER_DMG
-        if best.hp <= 0:
-            for k, v in NPC_KINDS[best.kind]["loot"].items():
-                p.inv[k] = p.inv.get(k, 0) + v
-            self.npcs.pop(best.nid, None)
-            return f"killed:{best.kind}"
-        return f"hit:{best.kind}"
+        best.hp -= PLAYER_DMG  # + best weapon, later
+        if best.hp > 0:
+            if best.atk and best.target is None:
+                best.target = pid
+            return f"hit:{best.name}"
+        self.npcs.pop(best.nid, None)
+        spec, rng = NPC_KINDS[best.kind], random
+        if "coin" in spec:
+            p.inv["coin"] = p.inv.get("coin", 0) + rng.randint(*spec["coin"])
+        if best.kind == "monster":
+            for it in economy.roll_sea_loot(rng, rng.randint(1, 3)):
+                p.inv[it] = p.inv.get(it, 0) + 1
+        elif best.kind == "brigand":
+            for it in economy.roll_loot(rng, rng.randint(1, 2)):
+                p.inv[it] = p.inv.get(it, 0) + 1
+        if rng.random() < spec.get("relic", 0):
+            p.inv["relic"] = p.inv.get("relic", 0) + 1
+        return f"killed:{best.name}"
 
     def dig(self, pid: str) -> dict:
         """Excavate the ruin under the player: recover materials + an artifact. The
@@ -294,8 +344,10 @@ class WorldGame:
                            for (x, y), s in self.structures.items()],
             "ruins": [{"x": x, "y": y, "kind": r["kind"]}
                       for (x, y), r in self.ruins.items()],
-            "npcs": [{"id": n.nid, "kind": n.kind, "x": round(n.x, 1), "y": round(n.y, 1),
-                      "hp": n.hp} for n in self.npcs.values()],
+            "npcs": [{"id": n.nid, "kind": n.kind, "name": n.name,
+                      "x": round(n.x, 1), "y": round(n.y, 1), "hp": n.hp,
+                      "max_hp": n.max_hp, "hostile": n.target is not None}
+                     for n in self.npcs.values()],
             # real cities rising/falling on their timeline, and the famous ancient
             # sites once they've been founded — the world's living history
             "cities": [{"name": c["name"], "lon": c["lon"], "lat": c["lat"], "stage": st}
