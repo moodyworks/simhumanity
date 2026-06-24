@@ -26,7 +26,8 @@ let ws = null, myPid = null, others = [], lastSent = 0;  // multiplayer presence
 let builds = {}, myInv = {}, structures = [], ruins = []; // gather / build / dig state
 let worldYear = null, worldEra = "";                     // era clock
 let npcs = [], myHp = null, myMaxHp = null;              // NPCs + combat
-let cities = [], sites = [];                            // historical cities + ancient sites
+let cities = [], sites = [], resourceNodes = [];        // cities, sites, gatherable nodes
+let moveTarget = null;                                  // click-to-move destination
 const terrainCache = new Map();                          // chunk -> ImageData (land/water)
 let toastT = 0;
 function toast(text) {
@@ -103,14 +104,23 @@ function update(dt) {
     if (keys.has("s") || keys.has("arrowdown")) dy += 1;
     if (keys.has("a") || keys.has("arrowleft")) dx -= 1;
     if (keys.has("d") || keys.has("arrowright")) dx += 1;
+    if (dx || dy) moveTarget = null;             // WASD cancels click-to-move
+    else if (moveTarget) {                        // head for the clicked tile
+      let tdx = moveTarget.x - px, tdy = moveTarget.y - py;
+      if (tdx > man.src_w / 2) tdx -= man.src_w; else if (tdx < -man.src_w / 2) tdx += man.src_w;
+      if (Math.hypot(tdx, tdy) < 1.2) moveTarget = null;
+      else { dx = tdx; dy = tdy; }
+    }
     if (dx || dy) {
       followCam = true;  // moving snaps the camera back to you
+      const opx = px, opy = py;
       const m = Math.hypot(dx, dy) || 1;
       let nx = ((px + dx / m * sp) % man.src_w + man.src_w) % man.src_w;  // wrap E/W
       let ny = Math.max(0, Math.min(man.src_h - 1, py + dy / m * sp));    // poles = wall
       const boat = (myInv.boat || 0) > 0;                   // a boat crosses water
       if (boat || !isWaterTile(nx, ny)) { px = nx; py = ny; }
       else { if (!isWaterTile(nx, py)) px = nx; if (!isWaterTile(px, ny)) py = ny; }
+      if (moveTarget && px === opx && py === opy) moveTarget = null;  // blocked → stop
     }
   }
   if (followCam) { camX = px; camY = py; }  // else the minimap "look" holds the camera
@@ -147,9 +157,21 @@ function render() {
                     offX + ix0 * TILE, offY + iy0 * TILE, (ix1 - ix0) * TILE, (iy1 - iy0) * TILE);
     }
   }
+  // resource nodes (gatherable) — small coloured pips
+  const resColor = { wood: "#4f7a36", stone: "#9a9a9a", food: "#d9c24a", fish: "#58b0d6", ore: "#c0813f" };
+  for (const nd of resourceNodes) {
+    let ox = nd.x; const d = ox - camX;
+    if (d > man.src_w / 2) ox -= man.src_w; else if (d < -man.src_w / 2) ox += man.src_w;
+    const sx = offX + ox * TILE, sy = offY + nd.y * TILE;
+    if (sx < -TILE || sy < -TILE || sx > canvas.width || sy > canvas.height) continue;
+    ctx.fillStyle = resColor[nd.kind] || "#9c7";
+    ctx.beginPath(); ctx.arc(sx, sy, Math.max(2, TILE * 0.3), 0, 7); ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,0.5)"; ctx.lineWidth = 1; ctx.stroke();
+  }
+
   // ancient sites (date-gated) — gold diamonds
   for (const s of sites) {
-    const t = lonlatToTile(s.lon, s.lat); let ox = t[0]; const dd = ox - px;
+    const t = lonlatToTile(s.lon, s.lat); let ox = t[0]; const dd = ox - camX;
     if (dd > man.src_w / 2) ox -= man.src_w; else if (dd < -man.src_w / 2) ox += man.src_w;
     const sx = offX + ox * TILE, sy = offY + t[1] * TILE, r = TILE * 0.6;
     if (sx < -60 || sy < -60 || sx > canvas.width + 60 || sy > canvas.height + 60) continue;
@@ -162,7 +184,7 @@ function render() {
   // historical cities, sized by their current era stage
   const sizeName = ["", "hamlet", "town", "city", "metropolis"];
   for (const c of cities) {
-    const t = lonlatToTile(c.lon, c.lat); let ox = t[0]; const dd = ox - px;
+    const t = lonlatToTile(c.lon, c.lat); let ox = t[0]; const dd = ox - camX;
     if (dd > man.src_w / 2) ox -= man.src_w; else if (dd < -man.src_w / 2) ox += man.src_w;
     const sx = offX + ox * TILE, sy = offY + t[1] * TILE;
     if (sx < -80 || sy < -80 || sx > canvas.width + 80 || sy > canvas.height + 80) continue;
@@ -175,7 +197,7 @@ function render() {
 
   // built structures
   for (const s of structures) {
-    let ox = s.x; const d = ox - px;
+    let ox = s.x; const d = ox - camX;
     if (d > man.src_w / 2) ox -= man.src_w; else if (d < -man.src_w / 2) ox += man.src_w;
     const sx = offX + ox * TILE, sy = offY + s.y * TILE;
     if (sx < -TILE || sy < -TILE || sx > canvas.width || sy > canvas.height) continue;
@@ -185,7 +207,7 @@ function render() {
 
   // ruins (decayed past-era structures — dig sites; press E on one)
   for (const s of ruins) {
-    let ox = s.x; const d = ox - px;
+    let ox = s.x; const d = ox - camX;
     if (d > man.src_w / 2) ox -= man.src_w; else if (d < -man.src_w / 2) ox += man.src_w;
     const sx = offX + ox * TILE, sy = offY + s.y * TILE;
     if (sx < -TILE || sy < -TILE || sx > canvas.width || sy > canvas.height) continue;
@@ -196,7 +218,7 @@ function render() {
   // NPCs (wander / hunt around you) — name, HP bar, hostile outline
   const npcColor = { wanderer: "#9aa3b0", merchant: "#6fd0c8", brigand: "#e08a3a", monster: "#d24a6a" };
   for (const n of npcs) {
-    let ox = n.x; const d = ox - px;
+    let ox = n.x; const d = ox - camX;
     if (d > man.src_w / 2) ox -= man.src_w; else if (d < -man.src_w / 2) ox += man.src_w;
     const sx = offX + ox * TILE, sy = offY + n.y * TILE, rr = TILE * 0.42;
     if (sx < -TILE * 2 || sy < -TILE * 2 || sx > canvas.width + TILE || sy > canvas.height + TILE) continue;
@@ -216,7 +238,7 @@ function render() {
 
   // other players (multiplayer presence) — drawn at the nearest wrap of their x
   for (const p of others) {
-    let ox = p.x; const d = ox - px;
+    let ox = p.x; const d = ox - camX;
     if (d > man.src_w / 2) ox -= man.src_w; else if (d < -man.src_w / 2) ox += man.src_w;
     const sx = offX + ox * TILE, sy = offY + p.y * TILE;
     if (sx < -50 || sy < -50 || sx > canvas.width + 50 || sy > canvas.height + 50) continue;
@@ -309,7 +331,7 @@ addEventListener("keydown", (e) => {
   if (k === "g" || k === " ") ws.send(JSON.stringify({ action: "gather" }));
   if (k === "e") ws.send(JSON.stringify({ action: "dig" }));
   if (k === "r") ws.send(JSON.stringify({ action: "attack" }));
-  if (k === "f") ws.send(JSON.stringify({ action: "trade" }));
+  if (k === "f") ws.send(JSON.stringify({ action: "talk" }));
   const bk = Object.keys(builds);            // 1..N build the listed structures
   if (/^[1-9]$/.test(k) && bk[+k - 1])
     ws.send(JSON.stringify({ action: "build", kind: bk[+k - 1] }));
@@ -327,7 +349,16 @@ function minimapLook(clientX, clientY) {
   followCam = false;
   return true;
 }
-canvas.addEventListener("mousedown", (e) => { if (minimapLook(e.clientX, e.clientY)) mmDragging = true; });
+canvas.addEventListener("mousedown", (e) => {
+  if (minimapLook(e.clientX, e.clientY)) { mmDragging = true; return; }
+  if (spawned && man) {  // click-to-move: walk toward the clicked tile
+    const offX = canvas.width / 2 - camX * TILE, offY = canvas.height / 2 - camY * TILE;
+    const tx = (Math.floor((e.clientX - offX) / TILE) % man.src_w + man.src_w) % man.src_w;
+    const ty = Math.max(0, Math.min(man.src_h - 1, Math.floor((e.clientY - offY) / TILE)));
+    moveTarget = { x: tx + 0.5, y: ty + 0.5 };
+    followCam = true;
+  }
+});
 addEventListener("mousemove", (e) => { if (mmDragging) minimapLook(e.clientX, e.clientY); });
 addEventListener("mouseup", () => { mmDragging = false; });
 
@@ -356,6 +387,7 @@ function connectWorld(city) {  // multiplayer presence over /world/ws
       npcs = m.npcs || [];
       cities = m.cities || [];
       sites = m.sites || [];
+      resourceNodes = m.resources || [];
       worldYear = m.year; worldEra = m.era;
     } else if (m.type === "inv") {
       myInv = m.inv || {};

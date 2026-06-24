@@ -442,9 +442,9 @@ async def world_ws(ws: WebSocket) -> None:
             elif action == "move":
                 world_game.move(pid, msg.get("x", 0), msg.get("y", 0))
             elif action == "gather":
-                res = world_game.gather(pid, world_terrain)
+                res = world_game.gather(pid)
                 await ws.send_text(json.dumps({"type": "log",
-                    "text": f"Gathered {res}." if res else "Nothing to gather here."}))
+                    "text": f"Gathered {res}." if res else "Nothing in reach to gather."}))
                 await _send_inv(ws, pid)
             elif action == "build":
                 r = world_game.build(pid, str(msg.get("kind", "")), world_terrain)
@@ -464,15 +464,14 @@ async def world_ws(ws: WebSocket) -> None:
                                                          r["kind"], r["era"]))
                 else:
                     await ws.send_text(json.dumps({"type": "log", "text": "Nothing buried here."}))
-            elif action == "trade":
-                r = world_game.trade(pid)
-                if r.get("status") != "ok":
-                    await ws.send_text(json.dumps({"type": "log", "text": "No merchant nearby."}))
+            elif action == "talk":
+                r = world_game.talk(pid)
+                if not r:
+                    await ws.send_text(json.dumps({"type": "log", "text": "No-one nearby to talk to."}))
                 else:
-                    e = r["earned"]
-                    await ws.send_text(json.dumps({"type": "log",
-                        "text": f"Sold your goods for {e} coin." if e else "Nothing to sell."}))
-                    await _send_inv(ws, pid)
+                    await ws.send_text(json.dumps({"type": "log", "text": r["text"]}))
+                    if r.get("traded"):
+                        await _send_inv(ws, pid)
             elif action == "attack":
                 r = world_game.attack(pid)
                 if r:

@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 
 from . import economy
 from .cities import CITIES, city_stage
-from .entities import (BRIGAND_NAMES, MONSTER_NAMES, _FIRST, _roll_speed)
+from .entities import (BRIGAND_NAMES, MONSTER_NAMES, WANDERER_LINES, _FIRST, _roll_speed)
 from .landmarks import SITES, founded_year
 from .world import ERA_DATES, ERA_ORDER
 
@@ -38,6 +38,14 @@ ATTACK_RANGE = 2.0   # melee reach (player <-> NPC)
 PLAYER_DMG = 6
 PLAYER_HP = 20
 WATER_SPEED = 0.5    # a boat moves at half pace (so sea monsters can catch you)
+
+# Resource nodes scattered around players, so resources are visible/populated and
+# finite per node (they re-seed as you move). Gather harvests the nearest one.
+RESOURCE_AMOUNT = 5
+MAX_NODES_PER_PLAYER = 14
+NODE_NEAR = 80
+GATHER_RANGE = 2.5
+TALK_RANGE = 3.0
 
 START_YEAR = -2000  # the spawn era (matches the spawn-city picker default)
 YEARS_PER_SEC = float(os.environ.get("WORLD_YEARS_PER_SEC", "4"))
@@ -76,6 +84,17 @@ class NPC:
     water: bool = False        # lives on water (sea monster) vs land
     target: str | None = None  # pid being hunted
     cd: float = 0.0            # attack cooldown (s)
+    head: float = 0.0         # wander heading (rad), kept across ticks (no jitter)
+    line: str = ""            # what a wanderer/merchant says when you talk
+
+
+@dataclass
+class ResourceNode:
+    rid: int
+    kind: str    # wood / stone / food / fish / ore
+    x: float
+    y: float
+    amount: int
 
 
 @dataclass
@@ -99,8 +118,10 @@ class WorldGame:
         self.structures: dict[tuple[int, int], dict] = {}
         self.ruins: dict[tuple[int, int], dict] = {}
         self.npcs: dict[int, NPC] = {}
+        self.resources: dict[int, ResourceNode] = {}
         self.events: list[dict] = []  # per-player notices (respawn) drained by main
         self._nid = 0
+        self._rid = 0
         self.t0 = time.time()
         self.era = era_index_for(START_YEAR)
 
@@ -125,13 +146,23 @@ class WorldGame:
                     del self.structures[xy]
         if terrain is not None and getattr(terrain, "ready", False):
             self._update_npcs(dt, terrain)
+            self._update_resources(terrain)
 
     # --- NPCs + combat ------------------------------------------------------
-    def _step(self, n: NPC, dx: float, dy: float, dist: float, terrain) -> None:
+    def _step(self, n: NPC, dx: float, dy: float, dist: float, terrain) -> bool:
         nx = (n.x + dx * dist) % terrain.W
         ny = min(terrain.H - 1, max(0.0, n.y + dy * dist))
         if terrain.is_water(nx, ny) == n.water:  # stay on your own medium
             n.x, n.y = nx, ny
+            return True
+        return False
+
+    def _wander(self, n: NPC, dt: float, terrain) -> None:
+        """Smooth idle drift: hold a heading, re-pick only occasionally or when
+        blocked — so mobs meander instead of jittering every tick."""
+        moved = self._step(n, math.cos(n.head), math.sin(n.head), n.speed * dt * 0.35, terrain)
+        if not moved or random.random() < 0.03:
+            n.head = random.random() * math.tau
 
     def _spawn_near(self, p: WorldPlayer, terrain) -> None:
         rng = random
@@ -146,11 +177,14 @@ class WorldGame:
             name = (rng.choice(BRIGAND_NAMES) if kind == "brigand"
                     else rng.choice(MONSTER_NAMES) if kind == "monster"
                     else rng.choice(_FIRST) + (" the Trader" if kind == "merchant" else ""))
+            line = ("Wares to sell, coin for your goods — come, look." if kind == "merchant"
+                    else rng.choice(WANDERER_LINES) if kind == "wanderer" else "")
             self._nid += 1
             self.npcs[self._nid] = NPC(
                 self._nid, kind, name, x, y, hp, hp,
                 atk=rng.randint(*spec["atk"]) if spec["atk"] else 0,
-                spot=spec["spot"], speed=_roll_speed(rng, spec["speed"]), water=spec["water"])
+                spot=spec["spot"], speed=_roll_speed(rng, spec["speed"]),
+                water=spec["water"], head=rng.random() * math.tau, line=line)
             return
 
     def _respawn(self, p: WorldPlayer) -> None:
@@ -174,8 +208,7 @@ class WorldGame:
                       key=lambda p: math.hypot(p.x - n.x, p.y - n.y), default=None)
             n.target = tgt.pid if tgt else None
         if tgt is None:
-            a = random.random() * math.tau
-            self._step(n, math.cos(a), math.sin(a), n.speed * dt * 0.5, terrain)
+            self._wander(n, dt, terrain)
             return
         d = math.hypot(tgt.x - n.x, tgt.y - n.y) or 1.0
         if d <= ATTACK_RANGE:
@@ -192,8 +225,8 @@ class WorldGame:
         if not players:
             self.npcs.clear()
             return
-        for nid, n in list(self.npcs.items()):  # despawn the lonely
-            if not any(abs(n.x - p.x) < NEAR and abs(n.y - p.y) < NEAR for p in players):
+        for nid, n in list(self.npcs.items()):  # despawn the lonely (hysteresis vs spawn)
+            if not any(abs(n.x - p.x) < NEAR * 1.6 and abs(n.y - p.y) < NEAR * 1.6 for p in players):
                 del self.npcs[nid]
         for p in players:  # top up the neighbourhood
             near = sum(1 for n in self.npcs.values()
@@ -205,8 +238,7 @@ class WorldGame:
             if n.atk:  # a hunter (brigand / sea monster)
                 self._hunt(n, dt, terrain)
             else:      # wanderer / merchant — idle drift
-                a = random.random() * math.tau
-                self._step(n, math.cos(a), math.sin(a), n.speed * dt * 0.4, terrain)
+                self._wander(n, dt, terrain)
 
     def attack(self, pid: str) -> str | None:
         """Strike the nearest NPC in reach; a kill drops coin + weighted goods + a
@@ -299,15 +331,74 @@ class WorldGame:
     def leave(self, pid: str) -> None:
         self.players.pop(pid, None)
 
-    def gather(self, pid: str, terrain) -> str | None:
-        """Gather the resource under the player; returns the item or None."""
+    def gather(self, pid: str) -> str | None:
+        """Harvest the nearest resource node in reach; depletes it."""
         p = self.players.get(pid)
         if not p:
             return None
-        res = terrain.resource_at(p.x, p.y)
-        if res:
-            p.inv[res] = p.inv.get(res, 0) + 1
-        return res
+        best, bd = None, GATHER_RANGE
+        for nd in self.resources.values():
+            d = math.hypot(nd.x - p.x, nd.y - p.y)
+            if d <= bd:
+                best, bd = nd, d
+        if not best:
+            return None
+        p.inv[best.kind] = p.inv.get(best.kind, 0) + 1
+        best.amount -= 1
+        if best.amount <= 0:
+            self.resources.pop(best.rid, None)
+        return best.kind
+
+    def _update_resources(self, terrain) -> None:
+        players = list(self.players.values())
+        if not players:
+            self.resources.clear()
+            return
+        for rid, nd in list(self.resources.items()):
+            if not any(abs(nd.x - p.x) < NODE_NEAR * 1.6 and abs(nd.y - p.y) < NODE_NEAR * 1.6
+                       for p in players):
+                del self.resources[rid]
+        for p in players:
+            near = sum(1 for nd in self.resources.values()
+                       if abs(nd.x - p.x) < NODE_NEAR and abs(nd.y - p.y) < NODE_NEAR)
+            for _ in range(MAX_NODES_PER_PLAYER - near):
+                self._spawn_node(p, terrain)
+
+    def _spawn_node(self, p: WorldPlayer, terrain) -> None:
+        for _ in range(8):
+            a, r = random.random() * math.tau, 8 + random.random() * (NODE_NEAR - 8)
+            x, y = (p.x + math.cos(a) * r) % terrain.W, p.y + math.sin(a) * r
+            if not (0 <= y < terrain.H):
+                continue
+            kind = terrain.resource_at(x, y)
+            if kind:
+                self._rid += 1
+                self.resources[self._rid] = ResourceNode(self._rid, kind, x, y, RESOURCE_AMOUNT)
+                return
+
+    def talk(self, pid: str) -> dict | None:
+        """Talk to the nearest wanderer/merchant: a wanderer shares a rumour; a
+        merchant buys your sellable goods for coin."""
+        p = self.players.get(pid)
+        if not p:
+            return None
+        best, bd = None, TALK_RANGE
+        for n in self.npcs.values():
+            if n.kind in ("wanderer", "merchant"):
+                d = math.hypot(n.x - p.x, n.y - p.y)
+                if d <= bd:
+                    best, bd = n, d
+        if best is None:
+            return None
+        if best.kind == "merchant":
+            earned = sum(p.inv.get(i, 0) * pr for i, pr in PRICES.items())
+            for i in PRICES:
+                p.inv[i] = 0
+            p.inv["coin"] = p.inv.get("coin", 0) + earned
+            text = (f'{best.name}: "A fair price!"  You sell your goods for {earned} coin.'
+                    if earned else f'{best.name}: "Come back with goods to sell."')
+            return {"text": text, "traded": True}
+        return {"text": f'{best.name}: "{best.line}"', "traded": False}
 
     def build(self, pid: str, kind: str, terrain) -> str:
         """Place a structure at the player's tile; returns the kind or an error
@@ -348,6 +439,8 @@ class WorldGame:
                       "x": round(n.x, 1), "y": round(n.y, 1), "hp": n.hp,
                       "max_hp": n.max_hp, "hostile": n.target is not None}
                      for n in self.npcs.values()],
+            "resources": [{"id": r.rid, "kind": r.kind, "x": round(r.x, 1), "y": round(r.y, 1)}
+                          for r in self.resources.values()],
             # real cities rising/falling on their timeline, and the famous ancient
             # sites once they've been founded — the world's living history
             "cities": [{"name": c["name"], "lon": c["lon"], "lat": c["lat"], "stage": st}
