@@ -46,6 +46,17 @@
     #relicList .relic { padding: 7px 0; border-bottom: 1px solid #222a38; }
     #relicList .rn { color: #ffe08a; }
     #relicList .rc { color: #93a3c0; font-size: 12px; }
+    #buildMenu { position: fixed; left: 10px; bottom: 56px; z-index: 9; display: none;
+      background: rgba(14, 17, 24, 0.97); border: 1px solid #2a3144; border-radius: 8px;
+      padding: 6px; min-width: 210px; box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5); }
+    #buildMenu .bhdr { color: #7c8aa5; font-size: 11px; padding: 2px 8px 5px; }
+    #buildMenu .brow { padding: 7px 10px; border-radius: 5px; cursor: pointer;
+      display: flex; justify-content: space-between; gap: 16px; }
+    #buildMenu .brow:hover { background: #2a6aa0; }
+    #buildMenu .bn { color: #ffd86b; }
+    #buildMenu .bcost { color: #93a3c0; font-size: 12px; }
+    #buildMenu .brow.cant { opacity: 0.45; }
+    #buildMenu .brow.cant:hover { background: #3a2030; }
     #log { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
       z-index: 8; background: rgba(10, 12, 18, 0.9); color: #ffe08a; padding: 7px 14px;
       border-radius: 7px; opacity: 0; transition: opacity 0.3s; pointer-events: none;
@@ -73,6 +84,7 @@
     <div id="relicList"></div>
     <p style="margin-top:10px;color:#7c8aa5">press I to close</p>
   </div></div>
+  <div id="buildMenu"></div>
   <canvas id="view"></canvas>
   <script src="/static/world.js"></script>
 </body>

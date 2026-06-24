@@ -44,6 +44,25 @@ function toggleRelics() {
     : "<p style='color:#93a3c0'>No relics yet — slay brigands and sea-beasts, or dig the past.</p>";
   el.style.display = open ? "flex" : "none";
 }
+function toggleBuild() {
+  const el = document.getElementById("buildMenu");
+  const open = el.style.display !== "block";
+  if (open) el.innerHTML = `<div class="bhdr">BUILD — click to raise it here</div>` +
+    (myPlans.length ? myPlans.map((p) => {
+      const cant = Object.entries(p.cost).some(([k, v]) => (myInv[k] || 0) < v);
+      const cost = Object.entries(p.cost).map(([k, v]) => `${v} ${k}`).join(", ");
+      return `<div class="brow${cant ? " cant" : ""}" data-t="${p.type}">` +
+        `<span class="bn">${p.label}</span><span class="bcost">${cost}</span></div>`;
+    }).join("") : `<div class="bcost" style="padding:6px">No plans known yet.</div>`);
+  el.style.display = open ? "block" : "none";
+}
+document.getElementById("buildMenu").addEventListener("click", (e) => {
+  const row = e.target.closest(".brow");
+  if (row && ws && ws.readyState === 1) {
+    ws.send(JSON.stringify({ action: "build", kind: row.dataset.t }));
+    document.getElementById("buildMenu").style.display = "none";
+  }
+});
 
 function resize() { canvas.width = innerWidth; canvas.height = innerHeight; }
 addEventListener("resize", resize); resize();
@@ -343,6 +362,7 @@ addEventListener("keydown", (e) => {
   if (k === "r") ws.send(JSON.stringify({ action: "attack" }));
   if (k === "f") ws.send(JSON.stringify({ action: "talk" }));
   if (k === "i") toggleRelics();
+  if (k === "b") toggleBuild();
   if (/^[1-9]$/.test(k) && myPlans[+k - 1])   // 1..N build the plans you know
     ws.send(JSON.stringify({ action: "build", kind: myPlans[+k - 1].type }));
 });
