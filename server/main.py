@@ -20,6 +20,7 @@ from .ai import MythEngine, make_provider
 from .cities import CITIES, city_stage
 from .eventlog import EventLog
 from .landmarks import km_per_tile
+from .plans import plan_public
 from .quests import build_claims
 from .settings import SETTINGS
 from .world import World
@@ -407,7 +408,8 @@ async def _send_inv(ws: WebSocket, pid: str) -> None:
     p = world_game.players.get(pid)
     if p is not None:
         await ws.send_text(json.dumps({"type": "inv", "inv": p.inv,
-                                       "hp": p.hp, "max_hp": p.max_hp}))
+            "hp": p.hp, "max_hp": p.max_hp, "relics": p.relics,
+            "plans": [plan_public(k) for k in sorted(p.plans)]}))
 
 
 async def _mythologize(ws: WebSocket, key, builder: str, kind: str, era: str) -> None:
@@ -427,8 +429,7 @@ async def world_ws(ws: WebSocket) -> None:
     (via _world_loop) broadcasts everyone's positions + structures."""
     await ws.accept()
     pid = uuid.uuid4().hex[:8]
-    await ws.send_text(json.dumps({"type": "welcome", "pid": pid,
-                                   "builds": BUILDS}))
+    await ws.send_text(json.dumps({"type": "welcome", "pid": pid}))
     _world_clients[ws] = pid
     try:
         while True:
@@ -449,7 +450,8 @@ async def world_ws(ws: WebSocket) -> None:
             elif action == "build":
                 r = world_game.build(pid, str(msg.get("kind", "")), world_terrain)
                 note = {"water": "Can't build on water.", "occupied": "Something's already here.",
-                        "cost": "Not enough materials.", "bad": "Unknown structure."}
+                        "cost": "Not enough materials.", "bad": "Unknown structure.",
+                        "unknown": "You haven't learned that plan yet."}
                 await ws.send_text(json.dumps({"type": "log",
                     "text": f"Built a {r}." if r in BUILDS else note.get(r, "Can't build.")}))
                 await _send_inv(ws, pid)

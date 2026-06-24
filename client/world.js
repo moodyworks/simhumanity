@@ -23,7 +23,7 @@ const minimap = new Image(); minimap.src = "/static/minimap.jpg"; // whole-Earth
 let spawned = false;       // movement is disabled until the player picks a spawn city
 let spawnCities = [];      // cities of the age — the spawn options
 let ws = null, myPid = null, others = [], lastSent = 0;  // multiplayer presence
-let builds = {}, myInv = {}, structures = [], ruins = []; // gather / build / dig state
+let myInv = {}, myPlans = [], myRelics = [], structures = [], ruins = []; // inv / plans / relics / builds
 let worldYear = null, worldEra = "";                     // era clock
 let npcs = [], myHp = null, myMaxHp = null;              // NPCs + combat
 let cities = [], sites = [], resourceNodes = [];        // cities, sites, gatherable nodes
@@ -34,6 +34,15 @@ function toast(text) {
   const el = document.getElementById("log");
   el.textContent = text; el.style.opacity = "1";
   clearTimeout(toastT); toastT = setTimeout(() => { el.style.opacity = "0"; }, 2500);
+}
+function toggleRelics() {
+  const el = document.getElementById("relics");
+  const open = el.style.display !== "flex";
+  if (open) document.getElementById("relicList").innerHTML = myRelics.length
+    ? myRelics.map((r) => `<div class="relic"><div class="rn">${r.name}</div>` +
+        `<div class="rc">${r.clue} — ${r.source}</div></div>`).join("")
+    : "<p style='color:#93a3c0'>No relics yet — slay brigands and sea-beasts, or dig the past.</p>";
+  el.style.display = open ? "flex" : "none";
 }
 
 function resize() { canvas.width = innerWidth; canvas.height = innerHeight; }
@@ -104,19 +113,21 @@ function update(dt) {
     if (keys.has("s") || keys.has("arrowdown")) dy += 1;
     if (keys.has("a") || keys.has("arrowleft")) dx -= 1;
     if (keys.has("d") || keys.has("arrowright")) dx += 1;
+    let step = sp;
     if (dx || dy) moveTarget = null;             // WASD cancels click-to-move
     else if (moveTarget) {                        // head for the clicked tile
       let tdx = moveTarget.x - px, tdy = moveTarget.y - py;
       if (tdx > man.src_w / 2) tdx -= man.src_w; else if (tdx < -man.src_w / 2) tdx += man.src_w;
-      if (Math.hypot(tdx, tdy) < 1.2) moveTarget = null;
-      else { dx = tdx; dy = tdy; }
+      const dist = Math.hypot(tdx, tdy);
+      if (dist < 0.6) moveTarget = null;
+      else { dx = tdx; dy = tdy; step = Math.min(sp, dist); }  // never overshoot → no jitter
     }
     if (dx || dy) {
       followCam = true;  // moving snaps the camera back to you
       const opx = px, opy = py;
       const m = Math.hypot(dx, dy) || 1;
-      let nx = ((px + dx / m * sp) % man.src_w + man.src_w) % man.src_w;  // wrap E/W
-      let ny = Math.max(0, Math.min(man.src_h - 1, py + dy / m * sp));    // poles = wall
+      let nx = ((px + dx / m * step) % man.src_w + man.src_w) % man.src_w;  // wrap E/W
+      let ny = Math.max(0, Math.min(man.src_h - 1, py + dy / m * step));    // poles = wall
       const boat = (myInv.boat || 0) > 0;                   // a boat crosses water
       if (boat || !isWaterTile(nx, ny)) { px = nx; py = ny; }
       else { if (!isWaterTile(nx, py)) px = nx; if (!isWaterTile(px, ny)) py = ny; }
@@ -171,9 +182,9 @@ function render() {
 
   // ancient sites (date-gated) — gold diamonds
   for (const s of sites) {
-    const t = lonlatToTile(s.lon, s.lat); let ox = t[0]; const dd = ox - camX;
+    let ox = s.x; const dd = ox - camX;
     if (dd > man.src_w / 2) ox -= man.src_w; else if (dd < -man.src_w / 2) ox += man.src_w;
-    const sx = offX + ox * TILE, sy = offY + t[1] * TILE, r = TILE * 0.6;
+    const sx = offX + ox * TILE, sy = offY + s.y * TILE, r = TILE * 0.6;
     if (sx < -60 || sy < -60 || sx > canvas.width + 60 || sy > canvas.height + 60) continue;
     ctx.fillStyle = "#ffe08a"; ctx.strokeStyle = "#000"; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(sx, sy - r); ctx.lineTo(sx + r, sy);
@@ -184,9 +195,9 @@ function render() {
   // historical cities, sized by their current era stage
   const sizeName = ["", "hamlet", "town", "city", "metropolis"];
   for (const c of cities) {
-    const t = lonlatToTile(c.lon, c.lat); let ox = t[0]; const dd = ox - camX;
+    let ox = c.x; const dd = ox - camX;
     if (dd > man.src_w / 2) ox -= man.src_w; else if (dd < -man.src_w / 2) ox += man.src_w;
-    const sx = offX + ox * TILE, sy = offY + t[1] * TILE;
+    const sx = offX + ox * TILE, sy = offY + c.y * TILE;
     if (sx < -80 || sy < -80 || sx > canvas.width + 80 || sy > canvas.height + 80) continue;
     const rad = TILE * (0.45 + 0.22 * c.stage);
     ctx.fillStyle = "#e8d3a0"; ctx.strokeStyle = "#5a4424"; ctx.lineWidth = 2;
@@ -283,9 +294,8 @@ function render() {
       ctx.fillRect(mx + n.x / man.src_w * mmW - 1, my + n.y / man.src_h * mmH - 1, 2, 2);
     }
     for (const c of cities) {  // civilization on the overview
-      const t = lonlatToTile(c.lon, c.lat);
       ctx.fillStyle = "#e8d3a0";
-      ctx.fillRect(mx + t[0] / man.src_w * mmW - 1, my + t[1] / man.src_h * mmH - 1, 2, 2);
+      ctx.fillRect(mx + c.x / man.src_w * mmW - 1, my + c.y / man.src_h * mmH - 1, 2, 2);
     }
     const dx = mx + px / man.src_w * mmW, dy = my + py / man.src_h * mmH;
     ctx.fillStyle = "#ff3b3b"; ctx.beginPath(); ctx.arc(dx, dy, 3.5, 0, 7); ctx.fill();
@@ -312,8 +322,8 @@ function render() {
   document.getElementById("vitals").textContent = spawned ? `${myInv.coin || 0} coin` : "";
   const items = Object.entries(myInv).filter(([k]) => k !== "coin").map(([k, v]) => `${k} ${v}`);
   document.getElementById("inv").textContent = spawned ? (items.join(" · ") || "(empty pack)") : "";
-  document.getElementById("builds").innerHTML = spawned && Object.keys(builds).length ?
-    "build " + Object.keys(builds).map((b, i) => `<b>${i + 1}</b>:${b}`).join("  ") : "";
+  document.getElementById("builds").innerHTML = spawned && myPlans.length ?
+    "build " + myPlans.map((p, i) => `<b>${i + 1}</b>:${p.label}`).join("  ") : "";
 }
 
 function frame(t) {
@@ -332,9 +342,9 @@ addEventListener("keydown", (e) => {
   if (k === "e") ws.send(JSON.stringify({ action: "dig" }));
   if (k === "r") ws.send(JSON.stringify({ action: "attack" }));
   if (k === "f") ws.send(JSON.stringify({ action: "talk" }));
-  const bk = Object.keys(builds);            // 1..N build the listed structures
-  if (/^[1-9]$/.test(k) && bk[+k - 1])
-    ws.send(JSON.stringify({ action: "build", kind: bk[+k - 1] }));
+  if (k === "i") toggleRelics();
+  if (/^[1-9]$/.test(k) && myPlans[+k - 1])   // 1..N build the plans you know
+    ws.send(JSON.stringify({ action: "build", kind: myPlans[+k - 1].type }));
 });
 addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
 
@@ -375,7 +385,7 @@ function connectWorld(city) {  // multiplayer presence over /world/ws
   ws.onmessage = (e) => {
     const m = JSON.parse(e.data);
     if (m.type === "welcome") {
-      myPid = m.pid; builds = m.builds || {};
+      myPid = m.pid;
       ws.send(JSON.stringify({ action: "spawn", x: Math.round(px), y: Math.round(py), city }));
     } else if (m.type === "presence") {
       const ps = m.players || [];
@@ -391,6 +401,8 @@ function connectWorld(city) {  // multiplayer presence over /world/ws
       worldYear = m.year; worldEra = m.era;
     } else if (m.type === "inv") {
       myInv = m.inv || {};
+      if (m.plans) myPlans = m.plans;
+      if (m.relics) myRelics = m.relics;
       if (m.hp != null) { myHp = m.hp; myMaxHp = m.max_hp; }
     } else if (m.type === "respawn") {
       px = m.x; py = m.y; myHp = m.hp; toast("You were slain — back to your city.");

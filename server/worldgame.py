@@ -17,6 +17,7 @@ from . import economy
 from .cities import CITIES, city_stage
 from .entities import (BRIGAND_NAMES, MONSTER_NAMES, WANDERER_LINES, _FIRST, _roll_speed)
 from .landmarks import SITES, founded_year
+from .plans import PLANS, RUIN_TEACHABLE, STARTING_PLANS, plan_public
 from .world import ERA_DATES, ERA_ORDER
 
 # NPCs spawn around players (the world is too big to simulate globally). Stats are
@@ -41,11 +42,12 @@ WATER_SPEED = 0.5    # a boat moves at half pace (so sea monsters can catch you)
 
 # Resource nodes scattered around players, so resources are visible/populated and
 # finite per node (they re-seed as you move). Gather harvests the nearest one.
-RESOURCE_AMOUNT = 5
-MAX_NODES_PER_PLAYER = 14
-NODE_NEAR = 80
+RESOURCE_AMOUNT = 6
+MAX_NODES_PER_PLAYER = 40   # plenty scattered around you
+NODE_NEAR = 110
 GATHER_RANGE = 2.5
 TALK_RANGE = 3.0
+WORLD_W, WORLD_H = 86400, 43200  # tiles (for projecting city/site lon-lat)
 
 START_YEAR = -2000  # the spawn era (matches the spawn-city picker default)
 YEARS_PER_SEC = float(os.environ.get("WORLD_YEARS_PER_SEC", "4"))
@@ -57,16 +59,27 @@ def era_index_for(year: int) -> int:
             return i
     return len(ERA_ORDER) - 1
 
-# Simple starter build set (the fuller plan/era system is ported later). "boat"
-# is crafted to the inventory (it lets you cross water) rather than placed.
-BUILDS: dict[str, dict[str, int]] = {
-    "hut": {"wood": 5},
-    "cairn": {"stone": 5},
-    "granary": {"wood": 4, "food": 3},
-    "boat": {"wood": 8},
-}
+# Buildable costs, derived from the shared PLANS catalog (the discoverable tech
+# tree). "boat" is crafted to the inventory (it lets you cross water) not placed.
+BUILDS = {k: v["cost"] for k, v in PLANS.items()}
+RELIC_SITES = ["Göbekli Tepe", "Jericho", "Troy", "Knossos", "Mycenae",
+               "Memphis", "Carthage", "Byblos", "Çatalhöyük"]
 PRICES = {"wood": 2, "stone": 3, "food": 1, "fish": 2, "ore": 8, "artifact": 25}
 TRADE_RANGE = 4.0
+
+
+def best_weapon(inv: dict) -> int:
+    return max((economy.WEAPON_ATK[i] for i in inv if i in economy.WEAPON_ATK), default=0)
+
+
+def best_armour(inv: dict) -> int:
+    return max((economy.ARMOUR_DEF[i] for i in inv if i in economy.ARMOUR_DEF), default=0)
+
+
+def _make_relic(source: str) -> dict:
+    site = random.choice(RELIC_SITES)
+    return {"name": f"Relic of {site}", "source": source,
+            "clue": f"Its markings hint at {site}."}
 
 
 @dataclass
@@ -109,6 +122,8 @@ class WorldPlayer:
     max_hp: int = PLAYER_HP
     sx: float = 0.0  # spawn point (respawn here on death)
     sy: float = 0.0
+    plans: set = field(default_factory=set)  # build recipes you know (the tech tree)
+    relics: list = field(default_factory=list)  # named relics with clues
     seen: float = field(default_factory=time.time)
 
 
@@ -122,6 +137,9 @@ class WorldGame:
         self.events: list[dict] = []  # per-player notices (respawn) drained by main
         self._nid = 0
         self._rid = 0
+        self._city_xy: dict[str, tuple] = {}  # cities/sites snapped onto land
+        self._site_xy: dict[str, tuple] = {}
+        self._snapped = False
         self.t0 = time.time()
         self.era = era_index_for(START_YEAR)
 
@@ -145,8 +163,40 @@ class WorldGame:
                                       "era": s["era"], "found_by": set()}
                     del self.structures[xy]
         if terrain is not None and getattr(terrain, "ready", False):
+            if not self._snapped:
+                self._snap_places(terrain)
             self._update_npcs(dt, terrain)
             self._update_resources(terrain)
+
+    def _lonlat_tile(self, lon: float, lat: float) -> tuple[float, float]:
+        return (lon + 180.0) / 360.0 * WORLD_W, (90.0 - lat) / 180.0 * WORLD_H
+
+    def _snap_land(self, terrain, lon: float, lat: float) -> tuple[int, int]:
+        """Project lon/lat to a tile, nudged to the nearest land if it lands at sea
+        (cities are coastal and our coastline ate a little land)."""
+        x, y = self._lonlat_tile(lon, lat)
+        if not terrain.is_water(x, y):
+            return int(x), int(y)
+        step = 16 * 3  # ~24 km hops outward
+        for ring in range(1, 12):
+            for k in range(-ring, ring + 1):
+                for dx, dy in ((k, -ring), (k, ring), (-ring, k), (ring, k)):
+                    nx, ny = x + dx * step, y + dy * step
+                    if 0 <= ny < terrain.H and not terrain.is_water(nx, ny):
+                        return int(nx), int(ny)
+        return int(x), int(y)
+
+    def _snap_places(self, terrain) -> None:
+        self._city_xy = {c["name"]: self._snap_land(terrain, c["lon"], c["lat"]) for c in CITIES}
+        self._site_xy = {s["name"]: self._snap_land(terrain, s["lon"], s["lat"]) for s in SITES}
+        self._snapped = True
+
+    def _place(self, name: str, lon: float, lat: float, snapped: dict) -> tuple[int, int]:
+        xy = snapped.get(name)
+        if xy:
+            return xy
+        x, y = self._lonlat_tile(lon, lat)
+        return int(x), int(y)
 
     # --- NPCs + combat ------------------------------------------------------
     def _step(self, n: NPC, dx: float, dy: float, dist: float, terrain) -> bool:
@@ -213,7 +263,7 @@ class WorldGame:
         d = math.hypot(tgt.x - n.x, tgt.y - n.y) or 1.0
         if d <= ATTACK_RANGE:
             if n.cd <= 0:
-                tgt.hp -= n.atk
+                tgt.hp -= max(1, n.atk - best_armour(tgt.inv))  # armour soaks the blow
                 n.cd = 1.0
                 if tgt.hp <= 0:
                     self._respawn(tgt)
@@ -253,7 +303,7 @@ class WorldGame:
                 best, bd = n, d
         if not best:
             return None
-        best.hp -= PLAYER_DMG  # + best weapon, later
+        best.hp -= PLAYER_DMG + best_weapon(p.inv)  # your best blade adds bite
         if best.hp > 0:
             if best.atk and best.target is None:
                 best.target = pid
@@ -269,7 +319,7 @@ class WorldGame:
             for it in economy.roll_loot(rng, rng.randint(1, 2)):
                 p.inv[it] = p.inv.get(it, 0) + 1
         if rng.random() < spec.get("relic", 0):
-            p.inv["relic"] = p.inv.get("relic", 0) + 1
+            p.relics.append(_make_relic(f"looted from {best.name}"))
         return f"killed:{best.name}"
 
     def dig(self, pid: str) -> dict:
@@ -290,13 +340,19 @@ class WorldGame:
         for k, v in BUILDS.get(ruin["kind"], {}).items():
             p.inv[k] = p.inv.get(k, 0) + v
         p.inv["artifact"] = p.inv.get("artifact", 0) + 1
+        extra = ""  # excavation sometimes reveals a lost building technique
+        teachable = [pl for pl in RUIN_TEACHABLE if pl not in p.plans]
+        if teachable and random.random() < 0.30:
+            learned = random.choice(teachable)
+            p.plans.add(learned)
+            extra = f" You work out how to build a {PLANS[learned]['label']}!"
         if ruin.get("legend"):
-            return {"status": "myth", "text": ruin["legend"]}
+            return {"status": "myth", "text": ruin["legend"] + extra}
         era = ERA_ORDER[ruin["era"]]
         return {"status": "truth", "key": key, "builder": ruin["builder"],
                 "kind": ruin["kind"], "era": era,
                 "text": (f"You unearth a {ruin['kind']} raised by {ruin['builder']} "
-                         f"in the {era} age — its legend now stirs.")}
+                         f"in the {era} age — its legend now stirs.") + extra}
 
     def set_legend(self, key: tuple, legend: str) -> None:
         ruin = self.ruins.get(key)
@@ -321,7 +377,8 @@ class WorldGame:
 
     def join(self, pid: str, name: str, x: float, y: float, city: str) -> None:
         self.players[pid] = WorldPlayer(pid, name, float(x), float(y), city,
-                                        sx=float(x), sy=float(y))
+                                        sx=float(x), sy=float(y),
+                                        plans=set(STARTING_PLANS))
 
     def move(self, pid: str, x: float, y: float) -> None:
         p = self.players.get(pid)
@@ -407,6 +464,8 @@ class WorldGame:
         recipe = BUILDS.get(kind)
         if not p or not recipe:
             return "bad"
+        if kind not in p.plans:
+            return "unknown"
         if any(p.inv.get(k, 0) < v for k, v in recipe.items()):
             return "cost"
         if kind == "boat":  # crafted to the inventory (lets you cross water)
@@ -443,9 +502,13 @@ class WorldGame:
                           for r in self.resources.values()],
             # real cities rising/falling on their timeline, and the famous ancient
             # sites once they've been founded — the world's living history
-            "cities": [{"name": c["name"], "lon": c["lon"], "lat": c["lat"], "stage": st}
+            "cities": [{"name": c["name"], "stage": st,
+                        "x": (cxy := self._place(c["name"], c["lon"], c["lat"], self._city_xy))[0],
+                        "y": cxy[1]}
                        for c in CITIES if (st := city_stage(c["timeline"], yr)) > 0],
-            "sites": [{"name": s["name"], "lon": s["lon"], "lat": s["lat"]}
+            "sites": [{"name": s["name"],
+                       "x": (sxy := self._place(s["name"], s["lon"], s["lat"], self._site_xy))[0],
+                       "y": sxy[1]}
                       for s in SITES if yr >= founded_year(s["era"])],
             "year": yr,
             "era": self.era_name(),
