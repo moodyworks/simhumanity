@@ -27,6 +27,7 @@ let myInv = {}, myPlans = [], myRelics = [], structures = [], ruins = []; // inv
 let myRenown = 0;                                       // scholar's renown from site digs
 const VISION = 11;                                      // fog-of-war sight radius (tiles)
 let explored = new Set(), exTileX = null, exTileY = null, fogOn = true;
+let debugOn = false, placingTarget = null;             // debug tools (` to toggle)
 let worldYear = null, worldEra = "";                     // era clock
 let npcs = [], myHp = null, myMaxHp = null;              // NPCs + combat
 let cities = [], sites = [], resourceNodes = [];        // cities, sites, gatherable nodes
@@ -150,6 +151,37 @@ document.getElementById("quest").addEventListener("click", (e) => {
   if (act === "hoard") ws.send(JSON.stringify({ action: "investigate", claim: id, guess: null }));
   else if (act === "t" || act === "f")
     ws.send(JSON.stringify({ action: "investigate", claim: id, guess: act === "t" }));
+});
+
+// --- debug tools: jump the world clock + relocate cities/sites --------------
+function toggleDebug() {
+  debugOn = !debugOn;
+  document.getElementById("debugBar").style.display = debugOn ? "block" : "none";
+  if (debugOn) populatePlaceSelect(); else placingTarget = null;
+  toast(debugOn ? "Debug ON — click teleports; pick a place to relocate it" : "Debug off");
+}
+function populatePlaceSelect() {
+  const items = [];
+  for (const c of cities) items.push(["city", c.name]);
+  for (const s of sites) items.push(["site", s.name]);
+  items.sort((a, b) => a[1].localeCompare(b[1]));
+  document.getElementById("placeSelect").innerHTML =
+    `<option value="">— relocate a city/site —</option>` +
+    items.map(([k, n]) => `<option value="${k}:${n}">${n} (${k})</option>`).join("");
+}
+document.getElementById("placeSelect").addEventListener("change", (e) => {
+  const v = e.target.value;
+  if (!v) { placingTarget = null; return; }
+  const i = v.indexOf(":");
+  placingTarget = { kind: v.slice(0, i), name: v.slice(i + 1) };
+  toast(`Click the map to place ${placingTarget.name}`);
+});
+document.getElementById("dbgYear").addEventListener("click", () => {
+  const input = prompt("Debug — jump to year (negative = BC, e.g. -9000 or 1500):", worldYear);
+  if (input === null) return;
+  const y = parseInt(input, 10);
+  if (!Number.isNaN(y) && ws && ws.readyState === 1)
+    ws.send(JSON.stringify({ action: "set_year", year: y }));
 });
 
 function resize() { canvas.width = innerWidth; canvas.height = innerHeight; }
@@ -489,6 +521,8 @@ function render() {
     (spawned ? `   online ${others.length + 1}` : "");
   document.getElementById("pos").textContent =
     `lat ${lat.toFixed(2)}  lon ${lon.toFixed(2)}  ·  tile ${px | 0},${py | 0}`;
+  if (debugOn) document.getElementById("dbgYear").textContent =
+    `year ${worldYear} (click to jump)`;
   const bar = document.getElementById("hpbar");
   if (spawned && myHp != null) {
     bar.style.display = "";
@@ -517,6 +551,7 @@ addEventListener("keydown", (e) => {
   if (k === "shift") keys.add("shift"); else keys.add(k);
   if (k === "+" || k === "=") TILE = Math.min(64, TILE + 4);
   if (k === "-" || k === "_") TILE = Math.max(2, TILE - 4);
+  if (k === "`") toggleDebug();  // debug tools: year-jump / teleport / place
   if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) {
     closeSiteQuiz(true);  // walking away abandons an open excavation
     closeQuest();         // (the ruin's quest persists — just close the panel)
@@ -547,15 +582,26 @@ function minimapLook(clientX, clientY) {
 }
 canvas.addEventListener("mousedown", (e) => {
   if (minimapLook(e.clientX, e.clientY)) { mmDragging = true; return; }
-  if (spawned && man) {  // click-to-move: walk toward the clicked tile
-    closeSiteQuiz(true);  // walking off abandons an open excavation
-    closeQuest();
-    const offX = canvas.width / 2 - camX * TILE, offY = canvas.height / 2 - camY * TILE;
-    const tx = (Math.floor((e.clientX - offX) / TILE) % man.src_w + man.src_w) % man.src_w;
-    const ty = Math.max(0, Math.min(man.src_h - 1, Math.floor((e.clientY - offY) / TILE)));
-    moveTarget = { x: tx + 0.5, y: ty + 0.5 };
-    followCam = true;
+  if (!spawned || !man) return;
+  const offX = canvas.width / 2 - camX * TILE, offY = canvas.height / 2 - camY * TILE;
+  const tx = (Math.floor((e.clientX - offX) / TILE) % man.src_w + man.src_w) % man.src_w;
+  const ty = Math.max(0, Math.min(man.src_h - 1, Math.floor((e.clientY - offY) / TILE)));
+  if (debugOn) {  // place the selected city/site here, otherwise teleport
+    if (placingTarget && ws && ws.readyState === 1) {
+      ws.send(JSON.stringify({ action: "move_place", kind: placingTarget.kind,
+        name: placingTarget.name, x: tx, y: ty }));
+      placingTarget = null; document.getElementById("placeSelect").value = "";
+    } else {
+      px = tx + 0.5; py = ty + 0.5; camX = px; camY = py; stepTo = null; moveTarget = null;
+      followCam = true;
+      if (ws && ws.readyState === 1)
+        ws.send(JSON.stringify({ action: "move", x: Math.round(px * 10) / 10, y: Math.round(py * 10) / 10 }));
+    }
+    return;
   }
+  closeSiteQuiz(true); closeQuest();  // walking off abandons an open excavation
+  moveTarget = { x: tx + 0.5, y: ty + 0.5 };
+  followCam = true;
 });
 addEventListener("mousemove", (e) => { if (mmDragging) minimapLook(e.clientX, e.clientY); });
 addEventListener("mouseup", () => { mmDragging = false; });

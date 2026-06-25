@@ -486,6 +486,14 @@ async def world_ws(ws: WebSocket) -> None:
                     await _send_inv(ws, pid)
             elif action == "site_abandon":
                 world_game.leave_site(pid)
+            elif action == "set_year":  # debug: jump the world clock
+                world_game.set_year(int(msg.get("year", 0)))
+            elif action == "move_place":  # debug: relocate a city/site (persisted)
+                v = world_game.move_place(str(msg.get("kind", "")), str(msg.get("name", "")),
+                                          int(msg.get("x", -1)), int(msg.get("y", -1)))
+                if v:
+                    await ws.send_text(json.dumps({"type": "log",
+                        "text": f"Moved {v['name']} to ({v['x']},{v['y']}). Saved."}))
             elif action == "talk":
                 r = world_game.talk(pid)
                 if not r:

@@ -7,11 +7,13 @@ gather / where you can build) comes from `WorldTerrain`.
 """
 from __future__ import annotations
 
+import json
 import math
 import os
 import random
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from . import economy
 from .cities import CITIES, city_stage
@@ -49,6 +51,7 @@ NODE_NEAR = 110
 GATHER_RANGE = 2.5
 TALK_RANGE = 3.0
 WORLD_W, WORLD_H = 86400, 43200  # tiles (for projecting city/site lon-lat)
+WORLD_OVERRIDES = Path(__file__).resolve().parent.parent / "world_place_overrides.json"
 
 START_YEAR = -2000  # the spawn era (matches the spawn-city picker default)
 YEARS_PER_SEC = float(os.environ.get("WORLD_YEARS_PER_SEC", "4"))
@@ -194,7 +197,50 @@ class WorldGame:
     def _snap_places(self, terrain) -> None:
         self._city_xy = {c["name"]: self._snap_land(terrain, c["lon"], c["lat"]) for c in CITIES}
         self._site_xy = {s["name"]: self._snap_land(terrain, s["lon"], s["lat"]) for s in SITES}
+        for key, xy in self._load_overrides().items():  # debug-placed positions win
+            kind, _, nm = key.partition(":")
+            tgt = self._city_xy if kind == "city" else self._site_xy
+            if nm in tgt:
+                tgt[nm] = (int(xy[0]), int(xy[1]))
         self._snapped = True
+
+    @staticmethod
+    def _load_overrides() -> dict:
+        try:
+            return json.loads(WORLD_OVERRIDES.read_text())
+        except Exception:
+            return {}
+
+    def set_year(self, year: int) -> None:
+        """Debug: jump the world clock. Re-bases t0 so `year` reads the target, and
+        decays prior-era works into ruins if the jump crosses into a later age."""
+        year = max(-50000, min(5000, int(year)))
+        self.t0 = time.time() - (year - START_YEAR) / YEARS_PER_SEC
+        new_era = era_index_for(year)
+        if new_era > self.era:
+            for xy, s in list(self.structures.items()):
+                if s["era"] < new_era:
+                    self.ruins[xy] = {"kind": s["kind"], "builder": s["name"],
+                                      "era": s["era"], "found_by": set()}
+                    del self.structures[xy]
+        self.era = new_era
+
+    def move_place(self, kind: str, name: str, x: int, y: int) -> dict | None:
+        """Debug: relocate a city/site to a tile and persist it (survives restart)."""
+        x, y = int(x), int(y)
+        if not (0 <= x < WORLD_W and 0 <= y < WORLD_H):
+            return None
+        tgt = self._city_xy if kind == "city" else self._site_xy if kind == "site" else None
+        if tgt is None or name not in tgt:
+            return None
+        tgt[name] = (x, y)
+        data = self._load_overrides()
+        data[f"{kind}:{name}"] = [x, y]
+        try:
+            WORLD_OVERRIDES.write_text(json.dumps(data, indent=2, sort_keys=True))
+        except Exception:
+            pass
+        return {"kind": kind, "name": name, "x": x, "y": y}
 
     def _place(self, name: str, lon: float, lat: float, snapped: dict) -> tuple[int, int]:
         xy = snapped.get(name)

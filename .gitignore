@@ -8,6 +8,7 @@ __pycache__/
 .DS_Store
 # Runtime debug placements from the in-game place tool.
 place_overrides.json
+world_place_overrides.json
 # Large world-map source + generated chunks (regenerate with tools/tile_world.py)
 world_src.jpg
 world.2004*.jpg
