@@ -18,6 +18,7 @@ from .cities import CITIES, city_stage
 from .entities import (BRIGAND_NAMES, MONSTER_NAMES, WANDERER_LINES, _FIRST, _roll_speed)
 from .landmarks import SITES, founded_year, site_questions
 from .plans import PLANS, RUIN_TEACHABLE, SITE_TEACHES, STARTING_PLANS, plan_public
+from .quests import build_claims, public_claim
 from .world import ERA_DATES, ERA_ORDER
 
 # NPCs spawn around players (the world is too big to simulate globally). Stats are
@@ -380,8 +381,10 @@ class WorldGame:
         ruin = self.ruins.get(key)
         if not ruin:
             return {"status": "nothing"}
+        q = self._ensure_quest(key, ruin)  # the judgeable legend of this ruin (a quest)
+        claims = self._public_claims(q)
         if pid in ruin["found_by"]:
-            return {"status": "again",
+            return {"status": "again", "builder": ruin["builder"], "claims": claims,
                     "text": ruin.get("legend") or "You've already excavated this ruin."}
         ruin["found_by"].add(pid)
         for k, v in BUILDS.get(ruin["kind"], {}).items():
@@ -394,10 +397,11 @@ class WorldGame:
             p.plans.add(learned)
             extra = f" You work out how to build a {PLANS[learned]['label']}!"
         if ruin.get("legend"):
-            return {"status": "myth", "text": ruin["legend"] + extra}
+            return {"status": "myth", "builder": ruin["builder"], "claims": claims,
+                    "text": ruin["legend"] + extra}
         era = ERA_ORDER[ruin["era"]]
         return {"status": "truth", "key": key, "builder": ruin["builder"],
-                "kind": ruin["kind"], "era": era,
+                "kind": ruin["kind"], "era": era, "claims": claims,
                 "text": (f"You unearth a {ruin['kind']} raised by {ruin['builder']} "
                          f"in the {era} age — its legend now stirs.") + extra}
 
@@ -405,6 +409,55 @@ class WorldGame:
         ruin = self.ruins.get(key)
         if ruin is not None:
             ruin["legend"] = legend
+
+    # --- truth-vs-myth quests on excavated ruins ----------------------------
+    def _ensure_quest(self, key: tuple, ruin: dict) -> dict:
+        if "quest" not in ruin:
+            ruin["quest"] = {"claims": build_claims(ruin["builder"], [], key[0], key[1]),
+                             "resolved": {}}
+        return ruin["quest"]
+
+    def _public_claims(self, quest: dict) -> list[dict]:
+        return [public_claim(c, quest["resolved"].get(c["id"])) for c in quest["claims"]]
+
+    def investigate(self, pid: str, claim_id: int, guess) -> dict | None:
+        """Resolve one legend-claim of the ruin under the player: judge a claim
+        true/embellished, or dig a rumoured hoard. Right calls earn renown."""
+        p = self.players.get(pid)
+        if not p:
+            return None
+        ruin = self.ruins.get((int(p.x), int(p.y)))
+        if not ruin or "quest" not in ruin:
+            return {"error": "No legend to investigate here."}
+        q = ruin["quest"]
+        claim = next((c for c in q["claims"] if c["id"] == claim_id), None)
+        if claim is None:
+            return {"error": "No such claim."}
+        if claim_id in q["resolved"]:
+            return {"error": "That part of the legend is already settled."}
+        truth = claim["truth"]
+        verdict = {"id": claim_id, "truth": truth, "basis": claim["basis"]}
+        if claim["mode"] == "hoard":
+            if truth:
+                for res, n in claim.get("reward", {}).items():
+                    p.inv[res] = p.inv.get(res, 0) + n
+                p.renown += 1
+                amt = claim.get("reward", {}).get("artifact", 0)
+                verdict["result_text"] = (f"The legend told true — you unearth the hoard! "
+                                          f"(+{amt} artifacts, +1 renown)")
+            else:
+                p.renown += 1
+                verdict["result_text"] = "You dig deep and find nothing — a fable. (+1 renown)"
+        else:
+            correct = guess is not None and bool(guess) == truth
+            verdict["correct"] = correct
+            if correct:
+                p.renown += 1
+                verdict["result_text"] = "Your judgement matches the record. (+1 renown)"
+            else:
+                verdict["result_text"] = "Your judgement was mistaken."
+        q["resolved"][claim_id] = verdict
+        return verdict
 
     # --- famous-site excavation quizzes -------------------------------------
     def _site_near(self, p: WorldPlayer):

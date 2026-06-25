@@ -464,11 +464,21 @@ async def world_ws(ws: WebSocket) -> None:
                 elif st in ("truth", "myth", "again", "site_done"):
                     await ws.send_text(json.dumps({"type": "log", "text": r["text"]}))
                     await _send_inv(ws, pid)
+                    if r.get("claims"):  # the ruin's judgeable legend → a quest
+                        await ws.send_text(json.dumps({"type": "quest",
+                            "builder": r.get("builder", ""), "claims": r["claims"]}))
                     if st == "truth":  # spin the legend (DeepSeek), cache + echo it
                         asyncio.create_task(_mythologize(ws, r["key"], r["builder"],
                                                          r["kind"], r["era"]))
                 else:
                     await ws.send_text(json.dumps({"type": "log", "text": "Nothing buried here."}))
+            elif action == "investigate":
+                v = world_game.investigate(pid, int(msg.get("claim", -1)), msg.get("guess"))
+                if v and "error" not in v:
+                    await ws.send_text(json.dumps({"type": "verdict", **v}))
+                    await _send_inv(ws, pid)
+                elif v:
+                    await ws.send_text(json.dumps({"type": "log", "text": v["error"]}))
             elif action == "site_answer":
                 r = world_game.answer_site(pid, msg.get("answers", {}))
                 if r:

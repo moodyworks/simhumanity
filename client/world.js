@@ -112,6 +112,46 @@ document.getElementById("siteQuiz").addEventListener("click", (e) => {
   }
 });
 
+// truth-vs-myth quests: judge a dug ruin's legend claim by claim
+let questClaims = [];
+function openQuest(m) {
+  questClaims = m.claims || [];
+  document.getElementById("qTitle").textContent = "The legend of " + (m.builder || "one lost to time");
+  renderQuest();
+  document.getElementById("quest").style.display = "flex";
+}
+function renderQuest() {
+  document.getElementById("qList").innerHTML = questClaims.map((c) => {
+    let row = `<div class="sqq" data-id="${c.id}"><div class="qt">It is told ${c.text}</div>`;
+    if (c.resolved) {
+      const rt = c.mode === "judge" ? (c.correct ? "good" : "bad") : (c.truth ? "good" : "bad");
+      row += `<span class="${c.truth ? "good" : "bad"}">${c.truth ? "TRUE" : "FALSE"}</span>` +
+        `<div class="res ${rt}">${c.basis}${c.result_text ? " — " + c.result_text : ""}</div>`;
+    } else if (c.mode === "hoard") {
+      row += `<button class="qbtn hoard" data-act="hoard">Dig for the hoard</button>`;
+    } else {
+      row += `<button class="qbtn" data-act="t">True</button>` +
+        `<button class="qbtn" data-act="f">Embellished</button>`;
+    }
+    return row + `</div>`;
+  }).join("");
+}
+function applyVerdict(v) {
+  const c = questClaims.find((q) => q.id === v.id);
+  if (c) { Object.assign(c, v, { resolved: true }); renderQuest(); }
+}
+function closeQuest() { document.getElementById("quest").style.display = "none"; }
+document.getElementById("quest").addEventListener("click", (e) => {
+  const btn = e.target.closest("button");
+  if (!btn || !ws) return;
+  if (btn.id === "qClose") { closeQuest(); return; }
+  const row = btn.closest(".sqq"); if (!row) return;
+  const id = +row.dataset.id, act = btn.dataset.act;
+  if (act === "hoard") ws.send(JSON.stringify({ action: "investigate", claim: id, guess: null }));
+  else if (act === "t" || act === "f")
+    ws.send(JSON.stringify({ action: "investigate", claim: id, guess: act === "t" }));
+});
+
 function resize() { canvas.width = innerWidth; canvas.height = innerHeight; }
 addEventListener("resize", resize); resize();
 
@@ -477,8 +517,10 @@ addEventListener("keydown", (e) => {
   if (k === "shift") keys.add("shift"); else keys.add(k);
   if (k === "+" || k === "=") TILE = Math.min(64, TILE + 4);
   if (k === "-" || k === "_") TILE = Math.max(2, TILE - 4);
-  if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k))
+  if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) {
     closeSiteQuiz(true);  // walking away abandons an open excavation
+    closeQuest();         // (the ruin's quest persists — just close the panel)
+  }
   if (!spawned || !ws || ws.readyState !== 1) return;
   if (k === "g" || k === " ") ws.send(JSON.stringify({ action: "gather" }));
   if (k === "e") ws.send(JSON.stringify({ action: "dig" }));
@@ -507,6 +549,7 @@ canvas.addEventListener("mousedown", (e) => {
   if (minimapLook(e.clientX, e.clientY)) { mmDragging = true; return; }
   if (spawned && man) {  // click-to-move: walk toward the clicked tile
     closeSiteQuiz(true);  // walking off abandons an open excavation
+    closeQuest();
     const offX = canvas.width / 2 - camX * TILE, offY = canvas.height / 2 - camY * TILE;
     const tx = (Math.floor((e.clientX - offX) / TILE) % man.src_w + man.src_w) % man.src_w;
     const ty = Math.max(0, Math.min(man.src_h - 1, Math.floor((e.clientY - offY) / TILE)));
@@ -557,6 +600,10 @@ function connectWorld(city) {  // multiplayer presence over /world/ws
       openSiteQuiz(m);
     } else if (m.type === "site_result") {
       showSiteResult(m);
+    } else if (m.type === "quest") {
+      openQuest(m);
+    } else if (m.type === "verdict") {
+      applyVerdict(m);
     } else if (m.type === "log") {
       toast(m.text);
     }
