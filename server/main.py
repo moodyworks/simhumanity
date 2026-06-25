@@ -72,6 +72,12 @@ _ws_by_pid: dict[str, WebSocket] = {}
 # World-map game (separate from the test-map World): presence broadcast to its
 # own clients so players see each other on the real Earth.
 world_game = WorldGame()
+try:  # let the world game read rendered tiles to keep cities/sites off the sea
+    from .rendered import RenderedTiles
+    _man = json.loads((WORLD_TILES_DIR / "manifest.json").read_text())
+    world_game.rendered = RenderedTiles(WORLD_TILES_DIR, _man)
+except Exception:
+    pass
 _world_clients: dict[WebSocket, str] = {}  # ws -> pid
 
 

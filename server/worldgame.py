@@ -155,6 +155,7 @@ class WorldGame:
         self._city_xy: dict[str, tuple] = {}  # cities/sites snapped onto land
         self._site_xy: dict[str, tuple] = {}
         self._snapped = False
+        self.rendered = None  # RenderedTiles (set by main) — nudges places off rendered sea
         self._site_sessions: dict[str, dict] = {}  # pid -> open excavation quiz
         self.t0 = time.time()
         self.era = era_index_for(START_YEAR)
@@ -203,8 +204,13 @@ class WorldGame:
         return int(x), int(y)
 
     def _snap_places(self, terrain) -> None:
-        self._city_xy = {c["name"]: self._snap_land(terrain, c["lon"], c["lat"]) for c in CITIES}
-        self._site_xy = {s["name"]: self._snap_land(terrain, s["lon"], s["lat"]) for s in SITES}
+        def snap(lon, lat):
+            if self.rendered is not None and self.rendered.available():
+                x, y = self._lonlat_tile(lon, lat)  # precise: nudge off rendered sea
+                return self.rendered.nearest_land(x, y)
+            return self._snap_land(terrain, lon, lat)  # coarse 8 km fallback
+        self._city_xy = {c["name"]: snap(c["lon"], c["lat"]) for c in CITIES}
+        self._site_xy = {s["name"]: snap(s["lon"], s["lat"]) for s in SITES}
         for key, xy in self._load_overrides().items():  # debug-placed positions win
             kind, _, nm = key.partition(":")
             tgt = self._city_xy if kind == "city" else self._site_xy
@@ -611,9 +617,10 @@ class WorldGame:
         return {"status": "ok", "earned": earned}
 
     def join(self, pid: str, name: str, x: float, y: float, city: str) -> None:
+        # boat from the start — it's a water planet; you need to be able to cross it
         self.players[pid] = WorldPlayer(pid, name, float(x), float(y), city,
                                         sx=float(x), sy=float(y),
-                                        plans=set(STARTING_PLANS))
+                                        plans=set(STARTING_PLANS) | {"boat"})
 
     def move(self, pid: str, x: float, y: float) -> None:
         p = self.players.get(pid)

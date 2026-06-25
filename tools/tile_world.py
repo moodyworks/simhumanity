@@ -109,12 +109,19 @@ def composite_sea(im: Image.Image, topo_path: Path, bath_path: Path,
         deepg = np.clip((255 - bath[g0:g1].astype(np.int16)) / 120.0, 0, 1)
         deepg = np.repeat(np.repeat(deepg, 2, 0), 2, 1)[:ey1 - ey0, :W]
         # GEBCO's 1km coast leaves near-black satellite sea mislabelled land; grab it
-        coastal = ((s < 55) & (B >= R)) & _dilate(wg, grab)
+        # (any near-black hue, not just blue — murky/sediment shallows count too)
+        coastal = (s < 60) & _dilate(wg, grab)
         water = wg | coastal
         deep = np.where(wg, deepg, 0.0)  # grabbed coastal pixels are shallow
         shade = (base * (1.0 - 0.20 * deep[..., None])).astype(np.uint8)  # subtle depth
         out = a.copy()
         out[water] = shade[water]
+        # lift any near-black shoreline pixels GEBCO+grab still missed, toward their
+        # own hue, so the coast has no black holes (no flooding — land stays land)
+        dark = (~water) & (s < 75) & _dilate(wg, grab + 8)
+        if dark.any():
+            lift = np.clip(a.astype(np.float32) * 2.2 + 34, 0, 255).astype(np.uint8)
+            out[dark] = lift[dark]
         core = out[y0 - ey0: y0 - ey0 + (y1 - y0)]
         im.paste(Image.fromarray(core, "RGB"), (0, y0))
     return im
