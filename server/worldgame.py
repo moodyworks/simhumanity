@@ -26,18 +26,24 @@ from .world import ERA_DATES, ERA_ORDER
 # NPCs spawn around players (the world is too big to simulate globally). Stats are
 # rolled per mob (ranges) to match the test-map game's variety. Sea **monsters**
 # live on the water and only threaten boaters; the shore is safe.
+# Three media: land (default), water (sea monsters), air (flies over both). Friendly
+# wanderers/merchants are slow and pause a lot so you can actually reach them.
 NPC_KINDS = {
-    "wanderer": {"hp": (18, 24), "atk": 0,       "spot": 0, "speed": 6,  "water": False},
-    "merchant": {"hp": (18, 22), "atk": 0,       "spot": 0, "speed": 5,  "water": False},
-    "brigand":  {"hp": (16, 28), "atk": (4, 8),  "spot": 8, "speed": 14, "water": False,
+    "wanderer": {"hp": (18, 24), "atk": 0,       "spot": 0, "speed": 5,  "water": False},
+    "merchant": {"hp": (18, 22), "atk": 0,       "spot": 0, "speed": 4,  "water": False},
+    "brigand":  {"hp": (16, 28), "atk": (4, 8),  "spot": 8, "speed": 12, "water": False,
                  "coin": (3, 12), "relic": economy.RELIC_DROP_CHANCE},
     "monster":  {"hp": (40, 75), "atk": (8, 15), "spot": 9, "speed": 9,  "water": True,
                  "coin": (10, 30), "relic": economy.MONSTER_RELIC_CHANCE},
+    "eagle":    {"hp": (12, 18), "atk": 0,       "spot": 0, "speed": 7,  "air": True},
+    "roc":      {"hp": (36, 60), "atk": (7, 12), "spot": 9, "speed": 10, "air": True,
+                 "coin": (8, 24), "relic": economy.MONSTER_RELIC_CHANCE},
 }
-SPAWN_KINDS, SPAWN_W = zip(("wanderer", 4), ("merchant", 2), ("brigand", 3), ("monster", 2))
+SPAWN_KINDS, SPAWN_W = zip(("wanderer", 4), ("merchant", 2), ("brigand", 3),
+                           ("monster", 2), ("eagle", 2), ("roc", 1))
 NEAR = 100           # keep/spawn NPCs within this of a player
 LEASH = 14           # a hunter gives up if its target gets this far (or leaves its medium)
-MAX_PER_PLAYER = 6
+MAX_PER_PLAYER = 8
 ATTACK_RANGE = 2.0   # melee reach (player <-> NPC)
 PLAYER_DMG = 6
 PLAYER_HP = 20
@@ -45,9 +51,9 @@ WATER_SPEED = 0.5    # a boat moves at half pace (so sea monsters can catch you)
 
 # Resource nodes scattered around players, so resources are visible/populated and
 # finite per node (they re-seed as you move). Gather harvests the nearest one.
-RESOURCE_AMOUNT = 6
-MAX_NODES_PER_PLAYER = 40   # plenty scattered around you
-NODE_NEAR = 110
+RESOURCE_AMOUNT = 8
+MAX_NODES_PER_PLAYER = 150  # a thick scattering, clustered close so you can see them
+NODE_NEAR = 80
 GATHER_RANGE = 2.5
 TALK_RANGE = 3.0
 WORLD_W, WORLD_H = 86400, 43200  # tiles (for projecting city/site lon-lat)
@@ -99,11 +105,13 @@ class NPC:
     spot: int = 0
     speed: float = 8.0
     water: bool = False        # lives on water (sea monster) vs land
+    air: bool = False          # flies — crosses land and water alike
     target: str | None = None  # pid being hunted
     cd: float = 0.0            # attack cooldown (s)
     head: float = 0.0         # wander heading (rad), kept across ticks (no jitter)
     line: str = ""            # what a wanderer/merchant says when you talk
     dest: tuple | None = None  # tile centre currently stepping toward (grid-locked)
+    pause: float = 0.0        # rest timer — friendlies stop-and-go so you can catch them
 
 
 @dataclass
@@ -269,6 +277,15 @@ class WorldGame:
         n.y += dy / d * step
         return False
 
+    def _passable(self, n: NPC, tx: int, ty: int, terrain) -> bool:
+        """Can this mob stand on tile (tx,ty)? Air goes anywhere; water mobs need
+        open sea; land mobs avoid water AND the coast (so they never wade in)."""
+        if n.air:
+            return True
+        if n.water:
+            return terrain.is_water(tx + 0.5, ty + 0.5)
+        return not terrain.wet(tx + 0.5, ty + 0.5)
+
     def _set_step(self, n: NPC, sdx: int, sdy: int, terrain) -> bool:
         """Aim n.dest at an adjacent tile centre (diagonal then axis fallbacks) if
         it's on this mob's medium and in bounds."""
@@ -277,14 +294,21 @@ class WorldGame:
             if not ax and not ay:
                 continue
             tx, ty = (cx + ax) % terrain.W, cy + ay
-            if 0 <= ty < terrain.H and terrain.is_water(tx + 0.5, ty + 0.5) == n.water:
+            if 0 <= ty < terrain.H and self._passable(n, tx, ty, terrain):
                 n.dest = (tx + 0.5, ty + 0.5)
                 return True
         return False
 
     def _wander(self, n: NPC, dt: float, terrain) -> None:
-        """Tile-step meander: hold a heading, step tile-to-tile, turn when blocked."""
+        """Tile-step meander: hold a heading, step tile-to-tile, turn when blocked.
+        Friendlies rest a beat between steps (stop-and-go) so you can catch them."""
+        if n.pause > 0:
+            n.pause = max(0.0, n.pause - dt)
+            return
         if self._advance(n, dt, terrain):  # at a tile centre — choose the next step
+            if not n.atk and random.random() < 0.45:  # the unarmed often pause
+                n.pause = random.uniform(0.5, 2.2)
+                return
             if random.random() < 0.12:
                 n.head = random.random() * math.tau
             sdx, sdy = round(math.cos(n.head)), round(math.sin(n.head))
@@ -299,23 +323,28 @@ class WorldGame:
         rng = random
         kind = rng.choices(SPAWN_KINDS, SPAWN_W)[0]
         spec = NPC_KINDS[kind]
+        air, water = spec.get("air", False), spec.get("water", False)
         for _ in range(8):
             a, r = rng.random() * math.tau, 30 + rng.random() * (NEAR - 30)
             x, y = (p.x + math.cos(a) * r) % terrain.W, p.y + math.sin(a) * r
-            if not (0 <= y < terrain.H) or terrain.is_water(x, y) != spec["water"]:
-                continue  # sea beasts on water, land mobs on land
+            if not (0 <= y < terrain.H):
+                continue
+            if not air:  # sea beasts on water; land mobs off water+coast; fliers anywhere
+                if (not terrain.is_water(x, y)) if water else terrain.wet(x, y):
+                    continue
             hp = rng.randint(*spec["hp"])
             name = (rng.choice(BRIGAND_NAMES) if kind == "brigand"
-                    else rng.choice(MONSTER_NAMES) if kind == "monster"
+                    else rng.choice(MONSTER_NAMES) if kind in ("monster", "roc")
+                    else "Great Eagle" if kind == "eagle"
                     else rng.choice(_FIRST) + (" the Trader" if kind == "merchant" else ""))
             line = ("Wares to sell, coin for your goods — come, look." if kind == "merchant"
                     else rng.choice(WANDERER_LINES) if kind == "wanderer" else "")
             self._nid += 1
             self.npcs[self._nid] = NPC(
                 self._nid, kind, name, int(x) + 0.5, int(y) + 0.5, hp, hp,
-                atk=rng.randint(*spec["atk"]) if spec["atk"] else 0,
+                atk=rng.randint(*spec["atk"]) if spec.get("atk") else 0,
                 spot=spec["spot"], speed=_roll_speed(rng, spec["speed"]),
-                water=spec["water"], head=rng.random() * math.tau, line=line)
+                water=water, air=air, head=rng.random() * math.tau, line=line)
             return
 
     def _respawn(self, p: WorldPlayer) -> None:
@@ -327,7 +356,9 @@ class WorldGame:
 
     def _eligible(self, n: NPC, p: WorldPlayer, terrain) -> bool:
         """A sea monster only hunts players on the water (the shore is safe); a land
-        hunter only hunts players on land."""
+        hunter only hunts players on land; a roc strikes from above, anywhere."""
+        if n.air:
+            return True
         return terrain.is_water(p.x, p.y) == n.water
 
     def _hunt(self, n: NPC, dt: float, terrain) -> None:
@@ -555,7 +586,8 @@ class WorldGame:
             learned = None
         return {"status": "site_result", "site": name, "correct": correct, "total": len(qs),
                 "renown": p.renown, "learned": PLANS[learned]["label"] if learned else None,
-                "bases": [{"text": q["text"], "truth": q["truth"], "basis": q["basis"]}
+                "bases": [{"text": q["text"], "truth": q["truth"], "basis": q["basis"],
+                           "correct": bool(answers.get(str(q["id"]), answers.get(q["id"]))) == q["truth"]}
                           for q in qs]}
 
     def leave_site(self, pid: str) -> None:
@@ -636,11 +668,14 @@ class WorldGame:
             if not (0 <= y < terrain.H):
                 continue
             kind = terrain.resource_at(x, y)
-            if kind:
-                self._rid += 1  # snap nodes to tile centres
-                self.resources[self._rid] = ResourceNode(
-                    self._rid, kind, int(x) + 0.5, int(y) + 0.5, RESOURCE_AMOUNT)
-                return
+            if not kind:
+                continue
+            if kind != "fish" and terrain.wet(x, y):
+                continue  # land resources only on true dry land, never the coast/sea
+            self._rid += 1  # snap nodes to tile centres
+            self.resources[self._rid] = ResourceNode(
+                self._rid, kind, int(x) + 0.5, int(y) + 0.5, RESOURCE_AMOUNT)
+            return
 
     def talk(self, pid: str) -> dict | None:
         """Talk to the nearest wanderer/merchant: a wanderer shares a rumour; a
@@ -705,7 +740,7 @@ class WorldGame:
                       for (x, y), r in self.ruins.items()],
             "npcs": [{"id": n.nid, "kind": n.kind, "name": n.name,
                       "x": round(n.x, 1), "y": round(n.y, 1), "hp": n.hp,
-                      "max_hp": n.max_hp, "hostile": n.target is not None}
+                      "max_hp": n.max_hp, "hostile": n.target is not None, "spot": n.spot}
                      for n in self.npcs.values()],
             "resources": [{"id": r.rid, "kind": r.kind, "x": round(r.x, 1), "y": round(r.y, 1)}
                           for r in self.resources.values()],

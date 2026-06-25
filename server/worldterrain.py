@@ -26,7 +26,7 @@ class WorldTerrain:
         self.cw, self.ch = world_w // CELL, world_h // CELL  # 5400 x 2700
         self.topo_dir, self.marble_8km = topo_dir, marble_8km
         self.ready = False
-        self.water = self.elev = self.veg = None
+        self.water = self.elev = self.veg = self.waterf = None
 
     def build(self) -> None:
         cw, ch = self.cw, self.ch
@@ -50,6 +50,7 @@ class WorldTerrain:
         m = np.asarray(Image.open(self.marble_8km).convert("RGB").resize((cw, ch)))
         R, G, B = (m[:, :, i].astype(int) for i in range(3))
         self.elev = elev
+        self.waterf = waterf                          # per-cell sea fraction (0..1)
         self.water = waterf > 0.6                     # mostly-sea cells
         self.veg = (G > R) & (G >= B) & (G > 40) & ~self.water  # green vegetation
         self.ready = True
@@ -62,6 +63,14 @@ class WorldTerrain:
             return False
         cx, cy = self._cell(x, y)
         return bool(self.water[cy, cx])
+
+    def wet(self, x: float, y: float) -> bool:
+        """Coast-aware: any meaningful sea fraction in the cell. Land NPCs avoid
+        these so they don't wade onto the (coast-grabbed) shoreline."""
+        if not self.ready:
+            return False
+        cx, cy = self._cell(x, y)
+        return bool(self.waterf[cy, cx] > 0.3)
 
     def resource_at(self, x: float, y: float) -> str | None:
         if not self.ready:

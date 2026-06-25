@@ -86,7 +86,11 @@ function showSiteResult(m) {
     `You judged ${m.correct}/${m.total} claims correctly.</div>`;
   html += m.bases.map((b) =>
     `<div class="sqq"><div class="qt">${b.text}</div>` +
-    `<span class="${b.truth ? "good" : "bad"}">${b.truth ? "TRUE" : "FALSE"}</span> — ${b.basis}</div>`).join("");
+    `<span class="${b.truth ? "good" : "bad"}">${b.truth ? "TRUE" : "FALSE"}</span>` +
+    (b.correct != null
+      ? ` <span class="${b.correct ? "good" : "bad"}">${b.correct ? "✓ you judged right" : "✗ you missed it"}</span>`
+      : "") +
+    `<div class="res">${b.basis}</div></div>`).join("");
   let reward = `Claimed the Relic of ${m.site} · renown now ${m.renown}`;
   if (m.learned) reward += ` · learned to build ${m.learned}`;
   html += `<div style="margin:12px 0 0;color:#ffe08a">${reward}</div>`;
@@ -268,26 +272,32 @@ function inVision(wx, wy) {
   if (ddx > man.src_w / 2) ddx -= man.src_w; else if (ddx < -man.src_w / 2) ddx += man.src_w;
   return ddx * ddx + (wy - py) * (wy - py) <= VISION * VISION;
 }
-const fogActive = () => fogOn && TILE >= 8 && spawned;
+const fogActive = () => fogOn && spawned;
 function hideDyn(wx, wy) { return fogActive() && !inVision(wx, wy); }  // mobs/items: sight only
 function hideStat(wx, wy) {  // landmarks: sight or remembered
   return fogActive() && !inVision(wx, wy) &&
     !explored.has(Math.floor(wx) + "," + Math.floor(wy));
 }
 function drawFog(offX, offY) {
+  // Scan in fixed screen blocks (coarser when zoomed out) so fog is bounded and
+  // still drawn at any zoom level — sampling the world tile at each block centre.
   if (!fogActive()) return;
-  const pcx = Math.floor(px), pcy = Math.floor(py);
-  const x0 = Math.floor(-offX / TILE) - 1, x1 = Math.ceil((canvas.width - offX) / TILE) + 1;
-  const y0 = Math.max(0, Math.floor(-offY / TILE) - 1);
-  const y1 = Math.min(man.src_h, Math.ceil((canvas.height - offY) / TILE) + 1);
-  for (let wy = y0; wy < y1; wy++) {
-    for (let wx = x0; wx < x1; wx++) {
-      const twx = ((wx % man.src_w) + man.src_w) % man.src_w;
-      let ddx = twx - pcx;
-      if (ddx > man.src_w / 2) ddx -= man.src_w; else if (ddx < -man.src_w / 2) ddx += man.src_w;
-      if (ddx * ddx + (wy - pcy) * (wy - pcy) <= VISION * VISION) continue;  // in sight
-      ctx.fillStyle = explored.has(twx + "," + wy) ? "rgba(3,5,11,0.5)" : "rgba(3,5,11,0.96)";
-      ctx.fillRect(offX + wx * TILE, offY + wy * TILE, TILE + 1, TILE + 1);
+  const B = Math.max(14, TILE);
+  for (let sy = 0; sy < canvas.height; sy += B) {
+    for (let sx = 0; sx < canvas.width; sx += B) {
+      const wxf = (sx + B / 2 - offX) / TILE, wyf = (sy + B / 2 - offY) / TILE;
+      let dark;
+      if (wyf < 0 || wyf >= man.src_h) {
+        dark = "rgba(3,5,11,0.97)";  // beyond the poles
+      } else {
+        let ddx = wxf - px;
+        if (ddx > man.src_w / 2) ddx -= man.src_w; else if (ddx < -man.src_w / 2) ddx += man.src_w;
+        if (ddx * ddx + (wyf - py) * (wyf - py) <= VISION * VISION) continue;  // in sight
+        const twx = ((Math.floor(wxf) % man.src_w) + man.src_w) % man.src_w;
+        dark = explored.has(twx + "," + Math.floor(wyf)) ? "rgba(3,5,11,0.5)" : "rgba(3,5,11,0.96)";
+      }
+      ctx.fillStyle = dark;
+      ctx.fillRect(sx, sy, B + 1, B + 1);
     }
   }
 }
@@ -436,13 +446,22 @@ function render() {
   }
 
   // NPCs (wander / hunt around you) — name, HP bar, hostile outline
-  const npcColor = { wanderer: "#9aa3b0", merchant: "#6fd0c8", brigand: "#e08a3a", monster: "#d24a6a" };
+  const npcColor = { wanderer: "#9aa3b0", merchant: "#6fd0c8", brigand: "#e08a3a",
+    monster: "#d24a6a", eagle: "#e8e2c0", roc: "#b06ad0" };
   for (const n of npcs) {
     if (hideDyn(n.x, n.y)) continue;
     let ox = n.x; const d = ox - camX;
     if (d > man.src_w / 2) ox -= man.src_w; else if (d < -man.src_w / 2) ox += man.src_w;
     const sx = offX + ox * TILE, sy = offY + n.y * TILE, rr = TILE * 0.42;
     if (sx < -TILE * 2 || sy < -TILE * 2 || sx > canvas.width + TILE || sy > canvas.height + TILE) continue;
+    if (debugOn) {  // engage radius (mobs, red) or talk radius (friendlies, cyan)
+      const eng = n.spot > 0, talk = n.kind === "wanderer" || n.kind === "merchant";
+      if (eng || talk) {
+        ctx.beginPath(); ctx.arc(sx, sy, (eng ? n.spot : 3) * TILE, 0, 7);
+        ctx.strokeStyle = eng ? "rgba(255,60,60,0.5)" : "rgba(90,210,210,0.55)";
+        ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]); ctx.stroke(); ctx.setLineDash([]);
+      }
+    }
     ctx.fillStyle = npcColor[n.kind] || "#aaa";
     ctx.beginPath(); ctx.arc(sx, sy, rr, 0, 7); ctx.fill();
     ctx.lineWidth = n.hostile ? 2.5 : 1; ctx.strokeStyle = n.hostile ? "#ff2a2a" : "#000"; ctx.stroke();
@@ -474,6 +493,11 @@ function render() {
   let pox = px; const pdd = pox - camX;
   if (pdd > man.src_w / 2) pox -= man.src_w; else if (pdd < -man.src_w / 2) pox += man.src_w;
   const cx = offX + pox * TILE, cy = offY + py * TILE;
+  if (debugOn) {  // your field-of-view circle
+    ctx.beginPath(); ctx.arc(cx, cy, VISION * TILE, 0, 7);
+    ctx.strokeStyle = "rgba(255,220,120,0.5)"; ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 5]); ctx.stroke(); ctx.setLineDash([]);
+  }
   ctx.fillStyle = "#ff3b3b";
   ctx.fillRect(cx - TILE / 2, cy - TILE / 2, TILE, TILE);
   ctx.strokeStyle = "#fff"; ctx.lineWidth = 2;
