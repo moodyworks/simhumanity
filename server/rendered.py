@@ -16,6 +16,24 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+# Biome read straight from the rendered tile colour, so resources match what you see.
+BIOMES = ["water", "desert", "forest", "grass", "mountain", "snow"]
+
+
+def _classify(a: np.ndarray) -> np.ndarray:
+    """RGB chunk -> per-pixel biome index (uint8), from satellite colour."""
+    r, g, b = a[:, :, 0].astype(np.int16), a[:, :, 1].astype(np.int16), a[:, :, 2].astype(np.int16)
+    mx = np.maximum(np.maximum(r, g), b)
+    mn = np.minimum(np.minimum(r, g), b)
+    water = (b > r + 20) & (b > g) & (b > 100)          # painted sea-blue (client's test)
+    snow = (mn >= 180) & (mx - mn <= 40)                # bright & grey -> ice/snow
+    forest = (g > r) & (g >= b)                          # green -> trees/foliage
+    warm = (r >= g) & (g >= b - 10)                      # warm/dry (R>=G>=~B)
+    desert = warm & (mx > 175)                           # bright warm -> sand
+    gray = (mx - mn <= 30)                               # low saturation -> rock/mountain
+    return np.select([water, snow, forest, desert, gray, warm],
+                     [0, 5, 2, 1, 4, 3], default=3).astype(np.uint8)
+
 
 class RenderedTiles:
     def __init__(self, tiles_dir, manifest: dict, cap: int = 400) -> None:
@@ -25,31 +43,36 @@ class RenderedTiles:
         self.H = int(manifest["src_h"])
         self.ext = manifest.get("ext", "jpg")
         self._cap = cap
-        self._masks: OrderedDict[tuple[int, int], np.ndarray | None] = OrderedDict()
+        self._biomes: OrderedDict[tuple[int, int], np.ndarray | None] = OrderedDict()
 
-    def _mask(self, col: int, row: int):
+    def _chunk(self, col: int, row: int):
         key = (col, row)
-        if key in self._masks:
-            self._masks.move_to_end(key)
-            return self._masks[key]
+        if key in self._biomes:
+            self._biomes.move_to_end(key)
+            return self._biomes[key]
         try:
-            a = np.asarray(Image.open(self.dir / f"c{col}_r{row}.{self.ext}").convert("RGB"))
-            r, g, b = a[:, :, 0].astype(np.int16), a[:, :, 1].astype(np.int16), a[:, :, 2].astype(np.int16)
-            mask = (b > r + 20) & (b > g) & (b > 100)  # the client's sea-blue test
+            arr = _classify(np.asarray(Image.open(self.dir / f"c{col}_r{row}.{self.ext}").convert("RGB")))
         except Exception:
-            mask = None
-        self._masks[key] = mask
-        if len(self._masks) > self._cap:
-            self._masks.popitem(last=False)
-        return mask
+            arr = None
+        self._biomes[key] = arr
+        if len(self._biomes) > self._cap:
+            self._biomes.popitem(last=False)
+        return arr
 
     def available(self) -> bool:
-        return self._mask(0, 0) is not None
+        return self._chunk(0, 0) is not None
+
+    def _idx(self, tx: float, ty: float):
+        ix, iy = int(tx) % self.W, max(0, min(self.H - 1, int(ty)))
+        arr = self._chunk(ix // self.cp, iy // self.cp)
+        return None if arr is None else int(arr[iy % self.cp, ix % self.cp])
 
     def is_water(self, tx: float, ty: float) -> bool:
-        ix, iy = int(tx) % self.W, max(0, min(self.H - 1, int(ty)))
-        m = self._mask(ix // self.cp, iy // self.cp)
-        return False if m is None else bool(m[iy % self.cp, ix % self.cp])
+        return self._idx(tx, ty) == 0
+
+    def biome(self, tx: float, ty: float) -> str:
+        i = self._idx(tx, ty)
+        return "grass" if i is None else BIOMES[i]
 
     def water_frac(self, cx: int, cy: int, r: int) -> float:
         """Fraction of water in the (2r+1)x(2r+1) block — for telling solid ground /

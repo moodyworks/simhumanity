@@ -77,7 +77,18 @@ RELIC_SITES = ["Göbekli Tepe", "Jericho", "Troy", "Knossos", "Mycenae",
 PRICES = {  # what a merchant pays for goods
     "wood": 2, "stone": 3, "food": 1, "fish": 2, "ore": 8, "artifact": 25,
     "herbs": 3, "mushrooms": 2, "amber": 10, "game": 3, "obsidian": 7,
-    "flint": 3, "clay": 2, "olives": 4, "grapes": 4, "flax": 3, "reeds": 1,
+    "flint": 3, "clay": 2, "olives": 4, "grapes": 4, "flax": 3, "reeds": 1, "bones": 2,
+}
+# Resources keyed to the *rendered* biome (RenderedTiles.biome) so what you find
+# matches the ground you see: sand things in deserts, timber/game in forests, etc.
+# The staple repeats so it dominates; specials are rarer.
+BIOME_RES = {
+    "water":    ["fish", "fish", "fish", "reeds", "clay"],
+    "desert":   ["flint", "flint", "bones", "clay", "obsidian"],
+    "forest":   ["wood", "wood", "wood", "herbs", "mushrooms", "amber", "game"],
+    "grass":    ["food", "food", "olives", "grapes", "herbs", "flax", "game"],
+    "mountain": ["stone", "stone", "ore", "flint", "obsidian"],
+    "snow":     ["game", "stone", "flint"],
 }
 TRADE_RANGE = 4.0
 WARE_POOL = ["wood", "stone", "flint", "herbs", "olives", "grapes", "clay",
@@ -703,16 +714,21 @@ class WorldGame:
                 self._spawn_node(p, terrain)
 
     def _spawn_node(self, p: WorldPlayer, terrain) -> None:
+        rnd = self._rendered()
         for _ in range(8):
             a, r = random.random() * math.tau, 8 + random.random() * (NODE_NEAR - 8)
             x, y = (p.x + math.cos(a) * r) % terrain.W, p.y + math.sin(a) * r
             if not (0 <= y < terrain.H):
                 continue
-            if terrain.is_water(x, y) != self._water(x, y, terrain):
-                continue  # coarse vs rendered disagree at the coast → skip (no fish on land)
-            kind = terrain.resource_at(x, y)
-            if not kind:
-                continue
+            if rnd is not None:  # resource keyed to the biome you actually see
+                pool = BIOME_RES.get(rnd.biome(x, y))
+                if not pool:
+                    continue
+                kind = pool[((int(x) * 73856093) ^ (int(y) * 19349663)) % len(pool)]
+            else:
+                kind = terrain.resource_at(x, y)
+                if not kind:
+                    continue
             self._rid += 1  # snap nodes to tile centres
             self.resources[self._rid] = ResourceNode(
                 self._rid, kind, int(x) + 0.5, int(y) + 0.5, RESOURCE_AMOUNT)

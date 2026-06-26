@@ -408,7 +408,7 @@ function render() {
   const resColor = { wood: "#4f7a36", stone: "#9a9a9a", food: "#d9c24a", fish: "#58b0d6",
     ore: "#c0813f", herbs: "#6fae4a", mushrooms: "#b06a4a", amber: "#e0a020", game: "#c08050",
     obsidian: "#3a3a48", flint: "#7a7068", clay: "#b08868", olives: "#6a7a3a",
-    grapes: "#8a5a9a", flax: "#d8d090", reeds: "#8aa060" };
+    grapes: "#8a5a9a", flax: "#d8d090", reeds: "#8aa060", bones: "#cab594" };
   for (const nd of resourceNodes) {
     if (hideStat(nd.x, nd.y)) continue;
     let ox = nd.x; const d = ox - camX;
