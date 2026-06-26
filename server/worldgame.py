@@ -54,7 +54,7 @@ WATER_SPEED = 0.5    # a boat moves at half pace (so sea monsters can catch you)
 RESOURCE_AMOUNT = 8
 MAX_NODES_PER_PLAYER = 150  # a thick scattering, clustered close so you can see them
 NODE_NEAR = 80
-GATHER_RANGE = 2.5
+GATHER_RANGE = 1.5  # must be on or right next to the node (1 square)
 TALK_RANGE = 3.0
 WORLD_W, WORLD_H = 86400, 43200  # tiles (for projecting city/site lon-lat)
 WORLD_OVERRIDES = Path(__file__).resolve().parent.parent / "world_place_overrides.json"
@@ -74,7 +74,11 @@ def era_index_for(year: int) -> int:
 BUILDS = {k: v["cost"] for k, v in PLANS.items()}
 RELIC_SITES = ["Göbekli Tepe", "Jericho", "Troy", "Knossos", "Mycenae",
                "Memphis", "Carthage", "Byblos", "Çatalhöyük"]
-PRICES = {"wood": 2, "stone": 3, "food": 1, "fish": 2, "ore": 8, "artifact": 25}
+PRICES = {  # what a merchant pays for goods
+    "wood": 2, "stone": 3, "food": 1, "fish": 2, "ore": 8, "artifact": 25,
+    "herbs": 3, "mushrooms": 2, "amber": 10, "game": 3, "obsidian": 7,
+    "flint": 3, "clay": 2, "olives": 4, "grapes": 4, "flax": 3, "reeds": 1,
+}
 TRADE_RANGE = 4.0
 
 
@@ -283,11 +287,25 @@ class WorldGame:
         n.y += dy / d * step
         return False
 
+    def _rendered(self):
+        r = self.rendered
+        return r if (r is not None and r.available()) else None
+
+    def _water(self, tx: float, ty: float, terrain) -> bool:
+        """Does this tile render as water? Use the real chunk colour when we have it
+        (matches what the player sees), else the coarse 8 km terrain."""
+        r = self._rendered()
+        return r.is_water(tx, ty) if r else terrain.is_water(tx, ty)
+
     def _passable(self, n: NPC, tx: int, ty: int, terrain) -> bool:
         """Can this mob stand on tile (tx,ty)? Air goes anywhere; water mobs need
         open sea; land mobs avoid water AND the coast (so they never wade in)."""
         if n.air:
             return True
+        r = self._rendered()
+        if r is not None:  # exact rendered land/water (no separate coast fudge needed)
+            w = r.is_water(tx + 0.5, ty + 0.5)
+            return w if n.water else not w
         if n.water:
             return terrain.is_water(tx + 0.5, ty + 0.5)
         return not terrain.wet(tx + 0.5, ty + 0.5)
@@ -335,8 +353,12 @@ class WorldGame:
             x, y = (p.x + math.cos(a) * r) % terrain.W, p.y + math.sin(a) * r
             if not (0 <= y < terrain.H):
                 continue
-            if not air:  # sea beasts on water; land mobs off water+coast; fliers anywhere
-                if (not terrain.is_water(x, y)) if water else terrain.wet(x, y):
+            if not air:  # sea beasts on rendered water; land mobs on rendered land
+                r = self._rendered()
+                if r is not None:
+                    if r.is_water(x, y) != water:
+                        continue
+                elif (not terrain.is_water(x, y)) if water else terrain.wet(x, y):
                     continue
             hp = rng.randint(*spec["hp"])
             name = (rng.choice(BRIGAND_NAMES) if kind == "brigand"
@@ -365,7 +387,7 @@ class WorldGame:
         hunter only hunts players on land; a roc strikes from above, anywhere."""
         if n.air:
             return True
-        return terrain.is_water(p.x, p.y) == n.water
+        return self._water(p.x, p.y, terrain) == n.water
 
     def _hunt(self, n: NPC, dt: float, terrain) -> None:
         tgt = self.players.get(n.target) if n.target else None
@@ -674,11 +696,11 @@ class WorldGame:
             x, y = (p.x + math.cos(a) * r) % terrain.W, p.y + math.sin(a) * r
             if not (0 <= y < terrain.H):
                 continue
+            if terrain.is_water(x, y) != self._water(x, y, terrain):
+                continue  # coarse vs rendered disagree at the coast → skip (no fish on land)
             kind = terrain.resource_at(x, y)
             if not kind:
                 continue
-            if kind != "fish" and terrain.wet(x, y):
-                continue  # land resources only on true dry land, never the coast/sea
             self._rid += 1  # snap nodes to tile centres
             self.resources[self._rid] = ResourceNode(
                 self._rid, kind, int(x) + 0.5, int(y) + 0.5, RESOURCE_AMOUNT)

@@ -382,10 +382,14 @@ function render() {
     }
   }
   drawFog(offX, offY);  // darken everything beyond sight (explored ground stays dim)
-  // resource nodes (gatherable) — small coloured pips
-  const resColor = { wood: "#4f7a36", stone: "#9a9a9a", food: "#d9c24a", fish: "#58b0d6", ore: "#c0813f" };
+  // resource nodes (gatherable) — small coloured pips; explored ones stay shown
+  // (so a zoomed-out view loads the whole resource spread, not just what's in sight)
+  const resColor = { wood: "#4f7a36", stone: "#9a9a9a", food: "#d9c24a", fish: "#58b0d6",
+    ore: "#c0813f", herbs: "#6fae4a", mushrooms: "#b06a4a", amber: "#e0a020", game: "#c08050",
+    obsidian: "#3a3a48", flint: "#7a7068", clay: "#b08868", olives: "#6a7a3a",
+    grapes: "#8a5a9a", flax: "#d8d090", reeds: "#8aa060" };
   for (const nd of resourceNodes) {
-    if (hideDyn(nd.x, nd.y)) continue;
+    if (hideStat(nd.x, nd.y)) continue;
     let ox = nd.x; const d = ox - camX;
     if (d > man.src_w / 2) ox -= man.src_w; else if (d < -man.src_w / 2) ox += man.src_w;
     const sx = offX + ox * TILE, sy = offY + nd.y * TILE;
@@ -610,20 +614,20 @@ canvas.addEventListener("mousedown", (e) => {
   const offX = canvas.width / 2 - camX * TILE, offY = canvas.height / 2 - camY * TILE;
   const tx = (Math.floor((e.clientX - offX) / TILE) % man.src_w + man.src_w) % man.src_w;
   const ty = Math.max(0, Math.min(man.src_h - 1, Math.floor((e.clientY - offY) / TILE)));
-  if (debugOn) {  // place the selected city/site here, otherwise teleport
-    if (placingTarget && ws && ws.readyState === 1) {
-      ws.send(JSON.stringify({ action: "move_place", kind: placingTarget.kind,
-        name: placingTarget.name, x: tx, y: ty }));
-      placingTarget = null; document.getElementById("placeSelect").value = "";
-    } else {
-      px = tx + 0.5; py = ty + 0.5; camX = px; camY = py; stepTo = null; moveTarget = null;
-      followCam = true;
-      if (ws && ws.readyState === 1)
-        ws.send(JSON.stringify({ action: "move", x: Math.round(px * 10) / 10, y: Math.round(py * 10) / 10 }));
-    }
+  if (debugOn && placingTarget && ws && ws.readyState === 1) {  // place the picked landmark
+    ws.send(JSON.stringify({ action: "move_place", kind: placingTarget.kind,
+      name: placingTarget.name, x: tx, y: ty }));
+    placingTarget = null; document.getElementById("placeSelect").value = "";
     return;
   }
-  closeSiteQuiz(true); closeQuest();  // walking off abandons an open excavation
+  if (debugOn && e.shiftKey) {  // shift-click teleports (debug only)
+    px = tx + 0.5; py = ty + 0.5; camX = px; camY = py; stepTo = null; moveTarget = null;
+    followCam = true;
+    if (ws && ws.readyState === 1)
+      ws.send(JSON.stringify({ action: "move", x: Math.round(px * 10) / 10, y: Math.round(py * 10) / 10 }));
+    return;
+  }
+  closeSiteQuiz(true); closeQuest();  // plain click always walks (abandons a dig)
   moveTarget = { x: tx + 0.5, y: ty + 0.5 };
   followCam = true;
 });

@@ -19,6 +19,14 @@ Image.MAX_IMAGE_PIXELS = None
 
 CELL = 16  # world tiles per terrain cell (500 m * 16 = 8 km)
 
+# Diverse resources by biome (like the test-map game): the staple repeats so it
+# dominates, with rarer specials mixed in. Picked per tile, deterministically.
+_WATER_RES = ["fish", "fish", "fish", "reeds", "clay"]
+_PEAK_RES = ["ore", "ore", "obsidian", "flint", "stone"]
+_HILL_RES = ["stone", "stone", "stone", "flint", "clay"]
+_FOREST_RES = ["wood", "wood", "wood", "herbs", "mushrooms", "amber", "game"]
+_GRASS_RES = ["food", "food", "olives", "grapes", "herbs", "flax", "game"]
+
 
 class WorldTerrain:
     def __init__(self, world_w: int, world_h: int, topo_dir: str, marble_8km: str):
@@ -77,12 +85,15 @@ class WorldTerrain:
             return None
         cx, cy = self._cell(x, y)
         if self.water[cy, cx]:
-            return "fish"          # sail out (needs a boat) and fish
-        e = self.elev[cy, cx]
-        if e > 170:
-            return "ore"           # high peaks — rare, valuable
-        if e > 110:
-            return "stone"         # mountains
-        if self.veg[cy, cx]:
-            return "wood"          # forest / vegetation
-        return "food"              # plains / forage
+            pool = _WATER_RES                       # sea / coast (needs a boat)
+        else:
+            e = self.elev[cy, cx]
+            if e > 170:
+                pool = _PEAK_RES                    # high peaks — ore, obsidian
+            elif e > 110:
+                pool = _HILL_RES                    # mountains — stone, flint
+            elif self.veg[cy, cx]:
+                pool = _FOREST_RES                  # forest — wood, herbs, amber, game
+            else:
+                pool = _GRASS_RES                   # plains — food, olives, grapes, flax
+        return pool[((int(x) * 73856093) ^ (int(y) * 19349663)) % len(pool)]
