@@ -656,8 +656,8 @@ addEventListener("mousemove", (e) => { if (mmDragging) minimapLook(e.clientX, e.
 addEventListener("mouseup", () => { mmDragging = false; });
 
 function spawnAt(c) {
-  [px, py] = lonlatToTile(c.lon, c.lat);
-  px = Math.floor(px) + 0.5; py = Math.floor(py) + 0.5;  // tile-centred
+  if (c.x != null) { px = c.x + 0.5; py = c.y + 0.5; }  // snapped solid-land tile
+  else { [px, py] = lonlatToTile(c.lon, c.lat); px = Math.floor(px) + 0.5; py = Math.floor(py) + 0.5; }
   spawned = true;
   document.getElementById("spawn").style.display = "none";
   connectWorld(c.name);
@@ -670,7 +670,7 @@ function connectWorld(city) {  // multiplayer presence over /world/ws
     const m = JSON.parse(e.data);
     if (m.type === "welcome") {
       myPid = m.pid;
-      ws.send(JSON.stringify({ action: "spawn", x: Math.round(px), y: Math.round(py), city }));
+      ws.send(JSON.stringify({ action: "spawn", x: Math.floor(px) + 0.5, y: Math.floor(py) + 0.5, city }));
     } else if (m.type === "presence") {
       const ps = m.players || [];
       others = ps.filter((p) => p.pid !== myPid);
@@ -712,8 +712,9 @@ function loadSpawns() {  // cities of the age — pick one to begin
   fetch("/world/spawns").then((r) => r.json()).then((d) => {
     spawnCities = d.spawns || [];
     if (spawnCities.length) {
-      [px, py] = lonlatToTile(spawnCities[0].lon, spawnCities[0].lat);
-      px = Math.floor(px) + 0.5; py = Math.floor(py) + 0.5;
+      const c = spawnCities[0];
+      if (c.x != null) { px = c.x + 0.5; py = c.y + 0.5; }
+      else { [px, py] = lonlatToTile(c.lon, c.lat); px = Math.floor(px) + 0.5; py = Math.floor(py) + 0.5; }
     }
     const era = d.year < 0 ? `${-d.year} BC` : `${d.year} AD`;
     document.getElementById("spawnEra").textContent = `Cities of the age — ${era}`;

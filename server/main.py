@@ -404,9 +404,15 @@ async def world_spawns(year: int = -2000) -> dict:
     """Cities of the age to spawn into — those that exist (stage > 0) in `year`.
     Returns lon/lat; the client projects to a world tile via the manifest. This
     clusters players together in real settlements instead of an empty planet."""
-    out = [{"name": c["name"], "lon": c["lon"], "lat": c["lat"],
-            "stage": city_stage(c["timeline"], year)} for c in CITIES]
-    out = sorted((c for c in out if c["stage"] > 0), key=lambda c: -c["stage"])
+    out = []
+    for c in CITIES:
+        st = city_stage(c["timeline"], year)
+        if st <= 0:
+            continue
+        x, y = world_game._place(c["name"], c["lon"], c["lat"], world_game._city_xy)
+        out.append({"name": c["name"], "lon": c["lon"], "lat": c["lat"],
+                    "x": x, "y": y, "stage": st})  # x,y = snapped solid-land tile
+    out.sort(key=lambda c: -c["stage"])
     return {"year": year, "spawns": out}
 
 
