@@ -251,13 +251,17 @@ class WorldGame:
         self.era = new_era
 
     def move_place(self, kind: str, name: str, x: int, y: int) -> dict | None:
-        """Debug: relocate a city/site to a tile and persist it (survives restart)."""
+        """Debug: relocate a city/site to a tile and persist it (survives restart).
+        Snaps to the nearest solid land so a click near the coast still lands ashore."""
         x, y = int(x), int(y)
         if not (0 <= x < WORLD_W and 0 <= y < WORLD_H):
             return None
         tgt = self._city_xy if kind == "city" else self._site_xy if kind == "site" else None
         if tgt is None or name not in tgt:
             return None
+        r = self._rendered()
+        if r is not None:
+            x, y = r.nearest_land(x, y)
         tgt[name] = (x, y)
         data = self._load_overrides()
         data[f"{kind}:{name}"] = [x, y]
@@ -360,10 +364,10 @@ class WorldGame:
             x, y = (p.x + math.cos(a) * r) % terrain.W, p.y + math.sin(a) * r
             if not (0 <= y < terrain.H):
                 continue
-            if not air:  # sea beasts on rendered water; land mobs on rendered land
+            if not air:  # sea beasts in OPEN water; land mobs on rendered land
                 r = self._rendered()
                 if r is not None:
-                    if r.is_water(x, y) != water:
+                    if (not r.is_open_water(x, y)) if water else r.is_water(x, y):
                         continue
                 elif (not terrain.is_water(x, y)) if water else terrain.wet(x, y):
                     continue

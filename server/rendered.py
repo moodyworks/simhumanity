@@ -51,18 +51,44 @@ class RenderedTiles:
         m = self._mask(ix // self.cp, iy // self.cp)
         return False if m is None else bool(m[iy % self.cp, ix % self.cp])
 
-    def nearest_land(self, tx: float, ty: float, max_r: int = 300) -> tuple[int, int]:
-        """The nearest non-water rendered tile by expanding rings (or the original)."""
-        ix, iy = int(tx) % self.W, int(ty)
-        if not self.is_water(ix, iy):
+    def water_frac(self, cx: int, cy: int, r: int) -> float:
+        """Fraction of water in the (2r+1)x(2r+1) block — for telling solid ground /
+        open sea from a 1-tile coastal sliver."""
+        n = tot = 0
+        for dy in range(-r, r + 1):
+            for dx in range(-r, r + 1):
+                tot += 1
+                if self.is_water(cx + dx, cy + dy):
+                    n += 1
+        return n / tot
+
+    def is_open_water(self, tx: float, ty: float) -> bool:
+        ix, iy = int(tx) % self.W, max(0, min(self.H - 1, int(ty)))
+        return self.is_water(ix, iy) and self.water_frac(ix, iy, 3) >= 0.6
+
+    def _nearest(self, ix: int, iy: int, ok, max_r: int):
+        if ok(ix, iy):
             return ix, iy
         for r in range(1, max_r):
             for dx in range(-r, r + 1):  # top & bottom edges of the ring
                 for dy in (-r, r):
-                    if 0 <= iy + dy < self.H and not self.is_water(ix + dx, iy + dy):
+                    if 0 <= iy + dy < self.H and ok(ix + dx, iy + dy):
                         return (ix + dx) % self.W, iy + dy
             for dy in range(-r + 1, r):  # left & right edges
                 for dx in (-r, r):
-                    if 0 <= iy + dy < self.H and not self.is_water(ix + dx, iy + dy):
+                    if 0 <= iy + dy < self.H and ok(ix + dx, iy + dy):
                         return (ix + dx) % self.W, iy + dy
-        return ix, iy
+        return None
+
+    def nearest_land(self, tx: float, ty: float, max_r: int = 400) -> tuple[int, int]:
+        """Nearest *solid* land tile: first the nearest dry tile, then push inland a
+        little to ground whose 3x3 is mostly land — so a marker doesn't sit on a
+        1-tile coastal sliver (which still reads as sea)."""
+        ix, iy = int(tx) % self.W, int(ty)
+        base = self._nearest(ix, iy, lambda x, y: not self.is_water(x, y), max_r)
+        if base is None:
+            return ix, iy
+        solid = self._nearest(base[0], base[1],
+                              lambda x, y: not self.is_water(x, y) and self.water_frac(x, y, 1) <= 0.12,
+                              60)
+        return solid or base
