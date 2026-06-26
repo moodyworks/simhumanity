@@ -504,10 +504,19 @@ async def world_ws(ws: WebSocket) -> None:
                 r = world_game.talk(pid)
                 if not r:
                     await ws.send_text(json.dumps({"type": "log", "text": "No-one nearby to talk to."}))
+                elif r.get("trade"):
+                    await ws.send_text(json.dumps({"type": "trade", **r["trade"]}))
                 else:
                     await ws.send_text(json.dumps({"type": "log", "text": r["text"]}))
-                    if r.get("traded"):
-                        await _send_inv(ws, pid)
+            elif action in ("buy", "sell"):
+                fn = world_game.buy if action == "buy" else world_game.sell
+                r = fn(pid, str(msg.get("item", "")))
+                if r:
+                    await ws.send_text(json.dumps({"type": "log", "text": r["text"]}))
+                    await _send_inv(ws, pid)
+                    ti = world_game.trade_info(pid)  # refresh the open trade sheet
+                    if ti:
+                        await ws.send_text(json.dumps({"type": "trade", **ti}))
             elif action == "attack":
                 r = world_game.attack(pid)
                 if r:

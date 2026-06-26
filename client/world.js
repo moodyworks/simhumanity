@@ -157,6 +157,27 @@ document.getElementById("quest").addEventListener("click", (e) => {
     ws.send(JSON.stringify({ action: "investigate", claim: id, guess: act === "t" }));
 });
 
+// merchant trade: buy the merchant's wares / sell your goods for coin
+function openTrade(m) {
+  document.getElementById("trTitle").textContent = "🪙 " + (m.who || "Merchant");
+  document.getElementById("trCoin").textContent = `You have ${m.coin} coin`;
+  const row = (w, act) =>
+    `<div class="trrow"><span>${w.item}</span>` +
+    `<button data-act="${act}" data-item="${w.item}">${act} · ${w.price}</button></div>`;
+  document.getElementById("trBuy").innerHTML = m.buy.length
+    ? m.buy.map((w) => row(w, "buy")).join("") : "<div class='sub'>nothing for sale</div>";
+  document.getElementById("trSell").innerHTML = m.sell.length
+    ? m.sell.map((w) => row(w, "sell")).join("") : "<div class='sub'>nothing to sell</div>";
+  document.getElementById("trade").style.display = "flex";
+}
+function closeTrade() { document.getElementById("trade").style.display = "none"; }
+document.getElementById("trade").addEventListener("click", (e) => {
+  const btn = e.target.closest("button");
+  if (!btn || !ws) return;
+  if (btn.id === "trClose") { closeTrade(); return; }
+  if (btn.dataset.act) ws.send(JSON.stringify({ action: btn.dataset.act, item: btn.dataset.item }));
+});
+
 // --- debug tools: jump the world clock + relocate cities/sites --------------
 function toggleDebug() {
   debugOn = !debugOn;
@@ -582,7 +603,7 @@ addEventListener("keydown", (e) => {
   if (k === "`") toggleDebug();  // debug tools: year-jump / teleport / place
   if (["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(k)) {
     closeSiteQuiz(true);  // walking away abandons an open excavation
-    closeQuest();         // (the ruin's quest persists — just close the panel)
+    closeQuest(); closeTrade();  // (these persist — just close the panel)
   }
   if (!spawned || !ws || ws.readyState !== 1) return;
   if (k === "g" || k === " ") ws.send(JSON.stringify({ action: "gather" }));
@@ -627,7 +648,7 @@ canvas.addEventListener("mousedown", (e) => {
       ws.send(JSON.stringify({ action: "move", x: Math.round(px * 10) / 10, y: Math.round(py * 10) / 10 }));
     return;
   }
-  closeSiteQuiz(true); closeQuest();  // plain click always walks (abandons a dig)
+  closeSiteQuiz(true); closeQuest(); closeTrade();  // plain click always walks
   moveTarget = { x: tx + 0.5, y: ty + 0.5 };
   followCam = true;
 });
@@ -678,6 +699,8 @@ function connectWorld(city) {  // multiplayer presence over /world/ws
       openQuest(m);
     } else if (m.type === "verdict") {
       applyVerdict(m);
+    } else if (m.type === "trade") {
+      openTrade(m);
     } else if (m.type === "log") {
       toast(m.text);
     }

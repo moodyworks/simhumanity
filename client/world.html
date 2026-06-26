@@ -89,6 +89,22 @@
     #qFoot { margin-top: 16px; }
     #qFoot button { font: inherit; cursor: pointer; padding: 8px 18px;
       background: #2a6aa0; color: #fff; border: 1px solid #4a8fd0; border-radius: 7px; }
+    #trade { position: fixed; inset: 0; z-index: 21; display: none;
+      align-items: center; justify-content: center; background: rgba(5, 7, 13, 0.78); }
+    #trade .box { background: #11141d; border: 1px solid #3a3322; border-radius: 10px;
+      padding: 22px 26px; max-width: 560px; max-height: 82vh; overflow: auto; }
+    #trade h2 { margin: 0 0 2px; color: #ffd86b; }
+    #trade .sub { margin: 0 0 12px; color: #8ea0c0; font-size: 12px; }
+    #trade .trcols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    #trade .trhd { color: #7c8aa5; font-size: 11px; margin-bottom: 6px; letter-spacing: .05em; }
+    .trrow { display: flex; justify-content: space-between; align-items: center; gap: 10px;
+      padding: 5px 0; border-bottom: 1px solid #222a38; }
+    .trrow button { font: inherit; cursor: pointer; padding: 3px 10px; background: rgba(30, 36, 52, 0.9);
+      color: #cdd6e6; border: 1px solid #39405a; border-radius: 5px; }
+    .trrow button:hover { background: #2a6aa0; border-color: #4a8fd0; }
+    #trFoot { margin-top: 16px; }
+    #trFoot button { font: inherit; cursor: pointer; padding: 8px 18px;
+      background: #2a6aa0; color: #fff; border: 1px solid #4a8fd0; border-radius: 7px; }
     #log { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
       z-index: 8; background: rgba(10, 12, 18, 0.9); color: #ffe08a; padding: 7px 14px;
       border-radius: 7px; opacity: 0; transition: opacity 0.3s; pointer-events: none;
@@ -141,6 +157,15 @@
     <p class="sub">Judge each line true or embellished — and dig the rumoured hoard. Right calls earn renown.</p>
     <div id="qList"></div>
     <div id="qFoot"><button id="qClose">Close</button></div>
+  </div></div>
+  <div id="trade"><div class="box">
+    <h2 id="trTitle">Trade</h2>
+    <p class="sub" id="trCoin"></p>
+    <div class="trcols">
+      <div><div class="trhd">BUY</div><div id="trBuy"></div></div>
+      <div><div class="trhd">SELL</div><div id="trSell"></div></div>
+    </div>
+    <div id="trFoot"><button id="trClose">Done</button></div>
   </div></div>
   <canvas id="view"></canvas>
   <script src="/static/world.js"></script>

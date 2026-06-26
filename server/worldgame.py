@@ -80,6 +80,12 @@ PRICES = {  # what a merchant pays for goods
     "flint": 3, "clay": 2, "olives": 4, "grapes": 4, "flax": 3, "reeds": 1,
 }
 TRADE_RANGE = 4.0
+WARE_POOL = ["wood", "stone", "flint", "herbs", "olives", "grapes", "clay",
+             "food", "obsidian", "amber", "flax", "fish"]  # what merchants stock
+
+
+def buy_price(item: str) -> int:
+    return max(1, round(PRICES.get(item, 2) * 1.6))  # merchants sell dearer than they buy
 
 
 def best_weapon(inv: dict) -> int:
@@ -116,6 +122,7 @@ class NPC:
     line: str = ""            # what a wanderer/merchant says when you talk
     dest: tuple | None = None  # tile centre currently stepping toward (grid-locked)
     pause: float = 0.0        # rest timer — friendlies stop-and-go so you can catch them
+    stock: list = field(default_factory=list)  # goods a merchant sells
 
 
 @dataclass
@@ -372,7 +379,8 @@ class WorldGame:
                 self._nid, kind, name, int(x) + 0.5, int(y) + 0.5, hp, hp,
                 atk=rng.randint(*spec["atk"]) if spec.get("atk") else 0,
                 spot=spec["spot"], speed=_roll_speed(rng, spec["speed"]),
-                water=water, air=air, head=rng.random() * math.tau, line=line)
+                water=water, air=air, head=rng.random() * math.tau, line=line,
+                stock=rng.sample(WARE_POOL, 4) if kind == "merchant" else [])
             return
 
     def _respawn(self, p: WorldPlayer) -> None:
@@ -708,7 +716,7 @@ class WorldGame:
 
     def talk(self, pid: str) -> dict | None:
         """Talk to the nearest wanderer/merchant: a wanderer shares a rumour; a
-        merchant buys your sellable goods for coin."""
+        merchant opens a buy/sell trade."""
         p = self.players.get(pid)
         if not p:
             return None
@@ -721,14 +729,57 @@ class WorldGame:
         if best is None:
             return None
         if best.kind == "merchant":
-            earned = sum(p.inv.get(i, 0) * pr for i, pr in PRICES.items())
-            for i in PRICES:
-                p.inv[i] = 0
-            p.inv["coin"] = p.inv.get("coin", 0) + earned
-            text = (f'{best.name}: "A fair price!"  You sell your goods for {earned} coin.'
-                    if earned else f'{best.name}: "Come back with goods to sell."')
-            return {"text": text, "traded": True}
-        return {"text": f'{best.name}: "{best.line}"', "traded": False}
+            return {"trade": self.trade_info(pid)}
+        return {"text": f'{best.name}: "{best.line}"'}
+
+    def _merchant_near(self, p: WorldPlayer):
+        return min((n for n in self.npcs.values() if n.kind == "merchant"
+                    and math.hypot(n.x - p.x, n.y - p.y) <= TRADE_RANGE),
+                   key=lambda n: math.hypot(n.x - p.x, n.y - p.y), default=None)
+
+    def trade_info(self, pid: str) -> dict | None:
+        """The buy/sell sheet for the nearest merchant: their wares + what you can
+        sell, with prices and your coin."""
+        p = self.players.get(pid)
+        if not p:
+            return None
+        m = self._merchant_near(p)
+        if m is None:
+            return None
+        sell = [{"item": i, "price": PRICES[i]} for i in sorted(p.inv)
+                if i != "coin" and i in PRICES and p.inv.get(i, 0) > 0]
+        buy = [{"item": i, "price": buy_price(i)} for i in m.stock]
+        return {"who": m.name, "coin": p.inv.get("coin", 0), "buy": buy, "sell": sell}
+
+    def buy(self, pid: str, item: str) -> dict | None:
+        p = self.players.get(pid)
+        if not p:
+            return None
+        m = self._merchant_near(p)
+        if m is None:
+            return {"text": "No merchant nearby."}
+        if item not in m.stock:
+            return {"text": "They don't stock that."}
+        cost = buy_price(item)
+        if p.inv.get("coin", 0) < cost:
+            return {"text": f"You need {cost} coin for {item}."}
+        p.inv["coin"] = p.inv.get("coin", 0) - cost
+        p.inv[item] = p.inv.get(item, 0) + 1
+        return {"text": f"Bought {item} for {cost} coin."}
+
+    def sell(self, pid: str, item: str) -> dict | None:
+        p = self.players.get(pid)
+        if not p:
+            return None
+        if self._merchant_near(p) is None:
+            return {"text": "No merchant nearby."}
+        if p.inv.get(item, 0) <= 0 or item not in PRICES:
+            return {"text": "Nothing to sell."}
+        p.inv[item] -= 1
+        if p.inv[item] <= 0:
+            del p.inv[item]
+        p.inv["coin"] = p.inv.get("coin", 0) + PRICES[item]
+        return {"text": f"Sold {item} for {PRICES[item]} coin."}
 
     def build(self, pid: str, kind: str, terrain) -> str:
         """Place a structure at the player's tile; returns the kind or an error
