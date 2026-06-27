@@ -25,7 +25,12 @@ def _classify(a: np.ndarray) -> np.ndarray:
     r, g, b = a[:, :, 0].astype(np.int16), a[:, :, 1].astype(np.int16), a[:, :, 2].astype(np.int16)
     mx = np.maximum(np.maximum(r, g), b)
     mn = np.minimum(np.minimum(r, g), b)
-    water = (b > r + 20) & (b > g) & (b > 100)          # painted sea-blue (client's test)
+    # Water == blue-DOMINANT (blue clearly the top channel), down to a low floor so
+    # dark/deep blue sea counts too (the old b>100 floor lost shadowed polar/deep
+    # water). Blue-dominance is what separates water from every dark *land* type:
+    # forest/jungle is green-dominant and tundra/shadow is neutral, so neither can
+    # qualify — only genuine sea does. Must stay identical to client isWaterTile().
+    water = (b > r + 20) & (b > g) & (b > 30)            # painted sea-blue (client's test)
     snow = (mn >= 180) & (mx - mn <= 40)                # bright & grey -> ice/snow
     forest = (g > r) & (g >= b)                          # green -> trees/foliage
     warm = (r >= g) & (g >= b - 10)                      # warm/dry (R>=G>=~B)

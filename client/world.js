@@ -272,7 +272,10 @@ function isWaterTile(tx, ty) {  // water == the rendered sea-blue (matches the m
   const lx = ((Math.floor(tx) % cp) + cp) % cp, ly = Math.floor(ty) - r * cp;
   if (lx >= d.width || ly >= d.height) return false;
   const i = (ly * d.width + lx) * 4, R = d.data[i], G = d.data[i + 1], B = d.data[i + 2];
-  return B > R + 20 && B > G && B > 100;
+  // water == blue-DOMINANT down to a low floor, so dark/deep blue sea counts too.
+  // Blue-dominance excludes every dark land type (forest is green-dominant, tundra
+  // neutral). Must stay identical to the server's _classify() in rendered.py.
+  return B > R + 20 && B > G && B > 30;
 }
 
 function pickWalkStep(cx, cy, sdx, sdy) {  // adjacent walkable tile (diagonal, then axes)
