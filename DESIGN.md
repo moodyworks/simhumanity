@@ -300,15 +300,16 @@ For the **real world map** (Roadmap), bake accurate coordinates in from the star
 
 ## Changelog
 
-- **2026-06-27 (c)** — **Dark/deep blue sea now counts as water.** The water test
-  required `B > 100`, so shadowed/deep blue sea (polar, deep ocean) fell below it and
-  read as **land** — letting land mobs wander into dark water. Dropped the floor to
-  `B > 30` while keeping **blue-dominance** (`B > R+20 & B > G`), which is what
-  separates sea from every dark *land* type: forest/jungle is green-dominant and
-  tundra/shadow is neutral, so neither can ever qualify — only genuine blue sea
-  does (verified: rainforest/boreal/tundra/Sahara unchanged at ~0%, dark southern
-  ocean rescued). Changed identically in the server classifier (`rendered.py
-  _classify`) and the client (`world.js isWaterTile`) — the two must match.
+- **2026-06-27 (c)** — **Dark/deep blue sea now counts as water (incl. near-black
+  polar).** The water test required `B > 100`, so shadowed/deep blue sea read as
+  **land** — letting land mobs wander into dark water. Now `B > R+12 & B > G & B >
+  18`: kept **blue-dominance** (what separates sea from every dark *land* type —
+  forest/jungle is green-dominant, tundra/shadow neutral) but shrank the thresholds
+  to near-black so even the very dark water off Antarctica (`[2,5,20]`) classifies as
+  sea. Verified: rainforest/boreal/tundra/Sahara unchanged at ~0%; dark southern
+  ocean and Antarctic-edge water rescued. Changed identically in the server
+  classifier (`rendered.py _classify`) and the client (`world.js isWaterTile`) —
+  the two must match.
 - **2026-06-27 (b)** — **Sea mobs stay in open ocean (not rivers/lakes/coast).** A
   sea serpent kept appearing "on land". Cause: `tools/tile_world.py` **bakes**
   Natural Earth **rivers/lakes** and the GEBCO sea into the world tiles, so the
