@@ -70,6 +70,14 @@ class RenderedTiles:
     def is_water(self, tx: float, ty: float) -> bool:
         return self._idx(tx, ty) == 0
 
+    def water_state(self, tx: float, ty: float) -> bool | None:
+        """Tri-state: True = rendered sea-blue, False = land, None = unknown (the
+        chunk is untiled or unreadable, so we can't see the colour). Callers that
+        place mobs treat None as "not appropriate" — never drift onto a tile whose
+        colour we can't verify against what the player sees."""
+        i = self._idx(tx, ty)
+        return None if i is None else (i == 0)
+
     def biome(self, tx: float, ty: float) -> str:
         i = self._idx(tx, ty)
         return "grass" if i is None else BIOMES[i]

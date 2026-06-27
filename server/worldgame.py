@@ -333,19 +333,31 @@ class WorldGame:
         r = self._rendered()
         return r.is_water(tx, ty) if r else terrain.is_water(tx, ty)
 
-    def _passable(self, n: NPC, tx: int, ty: int, terrain) -> bool:
-        """Can this mob stand on tile (tx,ty)? Air goes anywhere; water mobs need
-        open sea; land mobs avoid water AND the coast (so they never wade in)."""
-        if n.air:
+    def _medium_ok(self, air: bool, water: bool, tx: int, ty: int, terrain) -> bool:
+        """Is tile (tx,ty) appropriate ground for a mob of this medium? Air goes
+        anywhere. With rendered tiles we test the *exact* pixel colour the player
+        sees: a water mob needs open-ish sea (no creeping thin rivers onto land); a
+        land mob needs dry land. An **unknown** tile (untiled / unreadable colour)
+        is never appropriate — we won't place a mob where we can't verify the
+        colour, which is what let land mobs drift into unmapped sea (and vice
+        versa). Only with no rendered tiles at all do we fall back to coarse 8 km."""
+        if air:
             return True
         r = self._rendered()
-        if r is not None:  # exact rendered land/water (no separate coast fudge needed)
-            if n.water:  # keep to open-ish water — no creeping up thin rivers onto land
-                return r.is_water(tx + 0.5, ty + 0.5) and r.water_frac(tx, ty, 1) >= 0.4
-            return not r.is_water(tx + 0.5, ty + 0.5)
-        if n.water:
+        if r is not None:
+            st = r.water_state(tx + 0.5, ty + 0.5)  # True water / False land / None unknown
+            if st is None:
+                return False
+            if water:
+                return st and r.water_frac(tx, ty, 1) >= 0.4
+            return not st
+        if water:  # startup only — coarse fallback until chunks are readable
             return terrain.is_water(tx + 0.5, ty + 0.5)
         return not terrain.wet(tx + 0.5, ty + 0.5)
+
+    def _passable(self, n: NPC, tx: int, ty: int, terrain) -> bool:
+        """Can this mob stand on tile (tx,ty)?"""
+        return self._medium_ok(n.air, n.water, tx, ty, terrain)
 
     def _set_step(self, n: NPC, sdx: int, sdy: int, terrain) -> bool:
         """Aim n.dest at an adjacent tile centre (diagonal then axis fallbacks) if
@@ -390,10 +402,13 @@ class WorldGame:
             x, y = (p.x + math.cos(a) * r) % terrain.W, p.y + math.sin(a) * r
             if not (0 <= y < terrain.H):
                 continue
-            if not air:  # sea beasts in OPEN water; land mobs on rendered land
+            if not air:  # sea beasts in OPEN water; land mobs on solid rendered land
                 r = self._rendered()
                 if r is not None:
-                    if (not r.is_open_water(x, y)) if water else r.is_water(x, y):
+                    if water:
+                        if not r.is_open_water(x, y):
+                            continue
+                    elif r.water_state(x, y) is not False:  # skip water AND unknown tiles
                         continue
                 elif (not terrain.is_water(x, y)) if water else terrain.wet(x, y):
                     continue
@@ -477,6 +492,13 @@ class WorldGame:
                 self._hunt(n, dt, terrain)
             else:      # wanderer / merchant — idle drift
                 self._wander(n, dt, terrain)
+        # Safety net: never leave a mob standing off its medium. Movement/spawn are
+        # gated, but a chunk loading (unknown -> water), a transient read, or a
+        # JPEG-decode threshold flip can still strand one — cull it and the top-up
+        # above re-seeds a valid one next tick (air is unrestricted, never culled).
+        for nid, n in list(self.npcs.items()):
+            if not self._medium_ok(n.air, n.water, math.floor(n.x), math.floor(n.y), terrain):
+                del self.npcs[nid]
 
     def attack(self, pid: str) -> str | None:
         """Strike the nearest NPC in reach; a kill drops coin + weighted goods + a

@@ -300,6 +300,20 @@ For the **real world map** (Roadmap), bake accurate coordinates in from the star
 
 ## Changelog
 
+- **2026-06-27** — **NPCs respect land/water (world map).** Land mobs were drifting
+  into water and sea mobs onto land. Root cause: the rendered-tile water test
+  reported an **unknown** tile (untiled or unreadable chunk) as land, so a land mob
+  treated any colour it couldn't read as walkable, and nothing re-validated a mob
+  after chunks loaded. Fixes: `rendered.py` gains `water_state()` (tri-state
+  water/land/**unknown**); `worldgame.py` replaces `_passable` with one
+  `_medium_ok(air, water, …)` used by **both** spawn and every movement step,
+  testing the exact sea-blue pixel the player sees and treating **unknown as never
+  appropriate** (a land/water mob won't step onto or spawn on a tile whose colour
+  can't be verified; air is unrestricted). An **end-of-tick sweep** despawns any mob
+  that still ends up off its medium (self-heals a chunk loading under a standing
+  mob, a transient read, or a PIL-vs-browser JPEG threshold flip); the top-up
+  re-seeds a valid one. Coarse 8 km terrain still backs the brief startup window
+  before chunks are readable, and the sweep cleans up once they come online.
 - **2026-06-24** — **Feel/parity round + grid-lock.** Click-to-move; smooth NPC
   wander (held heading); **populated resource nodes** (gatherable pips that deplete
   & re-seed); **talk (F)** to wanderers (rumours) / merchants (sell); **weapons &
