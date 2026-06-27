@@ -28,6 +28,11 @@ let myRenown = 0;                                       // scholar's renown from
 const VISION = 11;                                      // fog-of-war sight radius (tiles)
 let explored = new Set(), exTileX = null, exTileY = null, fogOn = true;
 let debugOn = false, placingTarget = null;             // debug tools (` to toggle)
+const RES_COLOR = {  // resource pip colours (shared by the map + the legend)
+  wood: "#4f7a36", stone: "#9a9a9a", food: "#d9c24a", fish: "#58b0d6", ore: "#c0813f",
+  herbs: "#6fae4a", mushrooms: "#b06a4a", amber: "#e0a020", game: "#c08050",
+  obsidian: "#3a3a48", flint: "#7a7068", clay: "#b08868", olives: "#6a7a3a",
+  grapes: "#8a5a9a", flax: "#d8d090", reeds: "#8aa060", bones: "#cab594" };
 let worldYear = null, worldEra = "";                     // era clock
 let npcs = [], myHp = null, myMaxHp = null;              // NPCs + combat
 let cities = [], sites = [], resourceNodes = [];        // cities, sites, gatherable nodes
@@ -47,6 +52,13 @@ function toggleRelics() {
         `<div class="rc">${r.clue} — ${r.source}</div></div>`).join("")
     : "<p style='color:#93a3c0'>No relics yet — slay brigands and sea-beasts, or dig the past.</p>";
   el.style.display = open ? "flex" : "none";
+}
+function toggleLegend() {
+  const el = document.getElementById("legend");
+  const open = el.style.display !== "block";
+  if (open) document.getElementById("legendGrid").innerHTML = Object.entries(RES_COLOR)
+    .map(([k, c]) => `<div class="lrow"><span class="sw" style="background:${c}"></span>${k}</div>`).join("");
+  el.style.display = open ? "block" : "none";
 }
 function toggleBuild() {
   const el = document.getElementById("buildMenu");
@@ -405,17 +417,13 @@ function render() {
   drawFog(offX, offY);  // darken everything beyond sight (explored ground stays dim)
   // resource nodes (gatherable) — small coloured pips; explored ones stay shown
   // (so a zoomed-out view loads the whole resource spread, not just what's in sight)
-  const resColor = { wood: "#4f7a36", stone: "#9a9a9a", food: "#d9c24a", fish: "#58b0d6",
-    ore: "#c0813f", herbs: "#6fae4a", mushrooms: "#b06a4a", amber: "#e0a020", game: "#c08050",
-    obsidian: "#3a3a48", flint: "#7a7068", clay: "#b08868", olives: "#6a7a3a",
-    grapes: "#8a5a9a", flax: "#d8d090", reeds: "#8aa060", bones: "#cab594" };
   for (const nd of resourceNodes) {
     if (hideStat(nd.x, nd.y)) continue;
     let ox = nd.x; const d = ox - camX;
     if (d > man.src_w / 2) ox -= man.src_w; else if (d < -man.src_w / 2) ox += man.src_w;
     const sx = offX + ox * TILE, sy = offY + nd.y * TILE;
     if (sx < -TILE || sy < -TILE || sx > canvas.width || sy > canvas.height) continue;
-    ctx.fillStyle = resColor[nd.kind] || "#9c7";
+    ctx.fillStyle = RES_COLOR[nd.kind] || "#9c7";
     ctx.beginPath(); ctx.arc(sx, sy, Math.max(2, TILE * 0.3), 0, 7); ctx.fill();
     ctx.strokeStyle = "rgba(0,0,0,0.5)"; ctx.lineWidth = 1; ctx.stroke();
   }
@@ -495,8 +503,9 @@ function render() {
       ctx.fillStyle = "rgba(0,0,0,0.6)"; ctx.fillRect(sx - bw / 2, sy - rr - 6, bw, 3);
       ctx.fillStyle = "#5bd64a"; ctx.fillRect(sx - bw / 2, sy - rr - 6, bw * n.hp / n.max_hp, 3);
     }
-    if (TILE >= 16 || n.hostile) {
-      ctx.fillStyle = "#dfe6f0"; ctx.font = "10px ui-monospace, monospace"; ctx.textAlign = "center";
+    if (TILE >= 5) {  // always label NPCs (skip only at extreme zoom-out)
+      ctx.fillStyle = n.hostile ? "#ff9a9a" : "#dfe6f0";
+      ctx.font = "10px ui-monospace, monospace"; ctx.textAlign = "center";
       ctx.fillText(n.name, sx, sy - rr - 9); ctx.textAlign = "left";
     }
   }
@@ -613,6 +622,7 @@ addEventListener("keydown", (e) => {
   if (k === "i") toggleRelics();
   if (k === "b") toggleBuild();
   if (k === "o") fogOn = !fogOn;  // toggle fog of war
+  if (k === "l") toggleLegend();  // resource-colour legend
   if (/^[1-9]$/.test(k) && myPlans[+k - 1])   // 1..N build the plans you know
     ws.send(JSON.stringify({ action: "build", kind: myPlans[+k - 1].type }));
 });

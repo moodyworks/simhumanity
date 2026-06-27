@@ -82,13 +82,13 @@ PRICES = {  # what a merchant pays for goods
 # Resources keyed to the *rendered* biome (RenderedTiles.biome) so what you find
 # matches the ground you see: sand things in deserts, timber/game in forests, etc.
 # The staple repeats so it dominates; specials are rarer.
-BIOME_RES = {
+BIOME_RES = {  # stone & wood appear everywhere (basic materials), just rarer off-biome
     "water":    ["fish", "fish", "fish", "reeds", "clay"],
-    "desert":   ["flint", "flint", "bones", "clay", "obsidian"],
-    "forest":   ["wood", "wood", "wood", "herbs", "mushrooms", "amber", "game"],
-    "grass":    ["food", "food", "olives", "grapes", "herbs", "flax", "game"],
-    "mountain": ["stone", "stone", "ore", "flint", "obsidian"],
-    "snow":     ["game", "stone", "flint"],
+    "desert":   ["flint", "flint", "stone", "bones", "clay", "obsidian"],
+    "forest":   ["wood", "wood", "wood", "stone", "herbs", "mushrooms", "amber", "game"],
+    "grass":    ["food", "food", "stone", "wood", "olives", "grapes", "herbs", "flax", "game"],
+    "mountain": ["stone", "stone", "stone", "ore", "flint", "obsidian", "wood"],
+    "snow":     ["game", "stone", "flint", "wood"],
 }
 TRADE_RANGE = 4.0
 WARE_POOL = ["wood", "stone", "flint", "herbs", "olives", "grapes", "clay",
@@ -326,8 +326,9 @@ class WorldGame:
             return True
         r = self._rendered()
         if r is not None:  # exact rendered land/water (no separate coast fudge needed)
-            w = r.is_water(tx + 0.5, ty + 0.5)
-            return w if n.water else not w
+            if n.water:  # keep to open-ish water — no creeping up thin rivers onto land
+                return r.is_water(tx + 0.5, ty + 0.5) and r.water_frac(tx, ty, 1) >= 0.4
+            return not r.is_water(tx + 0.5, ty + 0.5)
         if n.water:
             return terrain.is_water(tx + 0.5, ty + 0.5)
         return not terrain.wet(tx + 0.5, ty + 0.5)
@@ -478,7 +479,11 @@ class WorldGame:
             return None
         best.hp -= PLAYER_DMG + best_weapon(p.inv)  # your best blade adds bite
         if best.hp > 0:
-            if best.atk and best.target is None:
+            if not best.atk:  # a provoked friendly turns and fights back
+                best.atk = random.randint(3, 6)
+                best.spot = max(best.spot, 8)
+                best.pause = 0.0
+            if best.target is None:
                 best.target = pid
             return f"hit:{best.name}"
         self.npcs.pop(best.nid, None)
