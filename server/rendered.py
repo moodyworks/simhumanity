@@ -29,10 +29,11 @@ def _classify(a: np.ndarray) -> np.ndarray:
     # even the very dark polar/deep sea counts (e.g. the [2,5,20] water off
     # Antarctica). Blue-dominance is what separates water from every dark *land*
     # type: forest/jungle is green-dominant and tundra/shadow is neutral, so neither
-    # can qualify — only genuine sea does. Thresholds are small (b>r+12, b>18) so
-    # they fire even at near-black, where absolute channel gaps shrink. Must stay
-    # identical to client isWaterTile().
-    water = (b > r + 12) & (b > g) & (b > 18)            # painted sea-blue (client's test)
+    # can qualify — only genuine sea does. Thresholds are pushed to near-black
+    # (b>r+4, b>6) so the band reaches the darkest polar/deep sea; b>6 still rejects
+    # pure-black void/poles and b>r+4 rejects neutral shadow, so nothing land-side
+    # leaks. Must stay identical to client isWaterTile().
+    water = (b > r + 4) & (b > g) & (b > 6)              # painted sea-blue (client's test)
     snow = (mn >= 180) & (mx - mn <= 40)                # bright & grey -> ice/snow
     forest = (g > r) & (g >= b)                          # green -> trees/foliage
     warm = (r >= g) & (g >= b - 10)                      # warm/dry (R>=G>=~B)

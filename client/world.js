@@ -272,12 +272,12 @@ function isWaterTile(tx, ty) {  // water == the rendered sea-blue (matches the m
   const lx = ((Math.floor(tx) % cp) + cp) % cp, ly = Math.floor(ty) - r * cp;
   if (lx >= d.width || ly >= d.height) return false;
   const i = (ly * d.width + lx) * 4, R = d.data[i], G = d.data[i + 1], B = d.data[i + 2];
-  // water == blue-DOMINANT down to near-black, so even very dark polar/deep blue
-  // sea counts (the [2,5,20] water off Antarctica). Small thresholds (b>r+12, b>18)
-  // fire at near-black where channel gaps shrink; blue-dominance still excludes
-  // every dark land type (forest green-dominant, tundra neutral). Must stay
+  // water == blue-DOMINANT pushed to near-black, so even the darkest polar/deep blue
+  // sea counts (the [2,5,20] water off Antarctica). b>r+4 & b>6 reaches the black end
+  // while still rejecting pure-black void/poles and neutral shadow; blue-dominance
+  // excludes every dark land type (forest green-dominant, tundra neutral). Must stay
   // identical to the server's _classify() in rendered.py.
-  return B > R + 12 && B > G && B > 18;
+  return B > R + 4 && B > G && B > 6;
 }
 
 function pickWalkStep(cx, cy, sdx, sdy) {  // adjacent walkable tile (diagonal, then axes)
