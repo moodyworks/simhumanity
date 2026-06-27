@@ -300,6 +300,17 @@ For the **real world map** (Roadmap), bake accurate coordinates in from the star
 
 ## Changelog
 
+- **2026-06-27 (b)** — **Sea mobs stay in open ocean (not rivers/lakes/coast).** A
+  sea serpent kept appearing "on land". Cause: `tools/tile_world.py` **bakes**
+  Natural Earth **rivers/lakes** and the GEBCO sea into the world tiles, so the
+  displayed map carries thin water lines through land that aren't in the raw
+  satellite source. The server reads the same tiles and correctly saw a river pixel
+  as blue — but a mob on a 1-tile river/lake/coastal-sliver tile reads as "on land"
+  to the eye. Fix: a sea mob now requires **genuine open ocean** (`is_open_water`,
+  ≥60% water in a 7×7) to *stand*, not just to spawn — rivers, lakes and shoreline
+  slivers never qualify, and the wide neighbourhood vote is robust to PIL-vs-browser
+  JPEG-decode drift on thin features. The end-of-tick sweep culls any sea mob no
+  longer in open water.
 - **2026-06-27** — **NPCs respect land/water (world map).** Land mobs were drifting
   into water and sea mobs onto land. Root cause: the rendered-tile water test
   reported an **unknown** tile (untiled or unreadable chunk) as land, so a land mob

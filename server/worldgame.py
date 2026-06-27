@@ -349,7 +349,12 @@ class WorldGame:
             if st is None:
                 return False
             if water:
-                return st and r.water_frac(tx, ty, 1) >= 0.4
+                # Genuine open ocean only (>=60% water in a 7x7) — NOT the thin rivers
+                # and lakes the tile pipeline bakes through the land, nor 1-tile coastal
+                # slivers. Those read as blue to the server but look like land on screen
+                # (a sea mob sitting on a river line reads as "on land"). The wide
+                # neighbourhood vote is also robust to PIL-vs-browser JPEG decode drift.
+                return r.is_open_water(tx + 0.5, ty + 0.5)
             return not st
         if water:  # startup only — coarse fallback until chunks are readable
             return terrain.is_water(tx + 0.5, ty + 0.5)
