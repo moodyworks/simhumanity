@@ -136,6 +136,12 @@ async def _world_loop() -> None:
                 pid = _world_clients.pop(ws, None)
                 if pid:
                     world_game.leave(pid)
+        if world_game._res_dirty:  # deterministic resource field changed -> resend
+            world_game._res_dirty = False
+            rmsg = json.dumps(world_game.resources_payload())
+            for ws in list(_world_clients):
+                with contextlib.suppress(Exception):
+                    await ws.send_text(rmsg)
 
 
 app = FastAPI(title="simhumanity", lifespan=lifespan)

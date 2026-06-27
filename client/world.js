@@ -691,8 +691,9 @@ function connectWorld(city) {  // multiplayer presence over /world/ws
       npcs = m.npcs || [];
       cities = m.cities || [];
       sites = m.sites || [];
-      resourceNodes = m.resources || [];
       worldYear = m.year; worldEra = m.era;
+    } else if (m.type === "resources") {  // deterministic field, sent only on change
+      resourceNodes = m.resources || [];
     } else if (m.type === "inv") {
       myInv = m.inv || {};
       if (m.plans) myPlans = m.plans;

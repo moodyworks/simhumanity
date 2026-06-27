@@ -51,11 +51,22 @@ WATER_SPEED = 0.5    # a boat moves at half pace (so sea monsters can catch you)
 
 # Resource nodes scattered around players, so resources are visible/populated and
 # finite per node (they re-seed as you move). Gather harvests the nearest one.
-RESOURCE_AMOUNT = 8
-MAX_NODES_PER_PLAYER = 450  # a thick scattering spread well out around you
-NODE_NEAR = 240            # ~3x further out than before
-GATHER_RANGE = 1.5  # must be on or right next to the node (1 square)
+# Resources are a DETERMINISTIC field, not random spawns: each grid cell holds one
+# node at a fixed, hashed spot, so a place always has the same resources — they're
+# already there when you arrive instead of generating as you walk.
+RESOURCE_AMOUNT = 1   # one harvest per node, then it regrows
+GRID = 20             # tiles per resource cell (one node per cell)
+RES_RADIUS = 240      # how far out around you nodes are computed (square half-width)
+RESOURCE_REGROW = 90  # seconds a harvested node takes to come back
+GATHER_RANGE = 1.5    # must be on or right next to the node (1 square)
 TALK_RANGE = 3.0
+
+
+def _hash32(x: int, y: int) -> int:
+    m = 0xFFFFFFFF
+    h = (x * 374761393 + y * 668265263) & m
+    h = ((h ^ (h >> 13)) * 1274126177) & m
+    return (h ^ (h >> 16)) & m
 WORLD_W, WORLD_H = 86400, 43200  # tiles (for projecting city/site lon-lat)
 WORLD_OVERRIDES = Path(__file__).resolve().parent.parent / "world_place_overrides.json"
 
@@ -170,7 +181,10 @@ class WorldGame:
         self.structures: dict[tuple[int, int], dict] = {}
         self.ruins: dict[tuple[int, int], dict] = {}
         self.npcs: dict[int, NPC] = {}
-        self.resources: dict[int, ResourceNode] = {}
+        self.resources: dict[tuple[int, int], ResourceNode] = {}  # deterministic, keyed by tile
+        self._res_key = None          # which cells are covered (recompute on change)
+        self._res_dirty = False       # resources changed -> broadcast
+        self._depleted_until: dict[tuple[int, int], float] = {}  # harvested tile -> regrow time
         self.events: list[dict] = []  # per-player notices (respawn) drained by main
         self._nid = 0
         self._rid = 0
@@ -686,7 +700,7 @@ class WorldGame:
         self.players.pop(pid, None)
 
     def gather(self, pid: str) -> str | None:
-        """Harvest the nearest resource node in reach; depletes it."""
+        """Harvest the nearest node in reach; it then regrows after a while."""
         p = self.players.get(pid)
         if not p:
             return None
@@ -698,46 +712,63 @@ class WorldGame:
         if not best:
             return None
         p.inv[best.kind] = p.inv.get(best.kind, 0) + 1
-        best.amount -= 1
-        if best.amount <= 0:
-            self.resources.pop(best.rid, None)
+        tile = (int(best.x), int(best.y))
+        self._depleted_until[tile] = time.time() + RESOURCE_REGROW
+        self.resources.pop(tile, None)
+        self._res_key = None      # recompute so it stays gone until it regrows
+        self._res_dirty = True
         return best.kind
 
+    def _cell_node(self, cx: int, cy: int, terrain):
+        """The one deterministic node for a grid cell, or None (empty / regrowing)."""
+        h = _hash32(cx, cy)
+        if h % 7 == 0:  # a few cells are bare, for irregularity
+            return None
+        nx = cx * GRID + (h % GRID) + 0.5
+        ny = cy * GRID + ((h >> 8) % GRID) + 0.5
+        if not (0 <= ny < terrain.H):
+            return None
+        if self._depleted_until.get((int(nx), int(ny)), 0) > time.time():
+            return None
+        rnd = self._rendered()
+        if rnd is not None:
+            pool = BIOME_RES.get(rnd.biome(nx, ny))
+        else:
+            k0 = terrain.resource_at(nx, ny)
+            pool = [k0] if k0 else None
+        if not pool:
+            return None
+        kind = pool[_hash32(int(nx), int(ny)) % len(pool)]
+        return ResourceNode(0, kind, nx, ny, RESOURCE_AMOUNT)
+
     def _update_resources(self, terrain) -> None:
+        """Recompute the deterministic node field — only when players cross into new
+        cells (or a node was harvested), so it's stable as you wander."""
         players = list(self.players.values())
         if not players:
-            self.resources.clear()
+            if self.resources:
+                self.resources, self._res_dirty = {}, True
+            self._res_key = None
             return
-        for rid, nd in list(self.resources.items()):
-            if not any(abs(nd.x - p.x) < NODE_NEAR * 1.6 and abs(nd.y - p.y) < NODE_NEAR * 1.6
-                       for p in players):
-                del self.resources[rid]
+        key = frozenset((int(p.x) // GRID, int(p.y) // GRID) for p in players)
+        if key == self._res_key:
+            return
+        self._res_key = key
+        cellr = RES_RADIUS // GRID
+        now = time.time()
+        self._depleted_until = {t: u for t, u in self._depleted_until.items() if u > now}
+        want = {}
         for p in players:
-            near = sum(1 for nd in self.resources.values()
-                       if abs(nd.x - p.x) < NODE_NEAR and abs(nd.y - p.y) < NODE_NEAR)
-            for _ in range(MAX_NODES_PER_PLAYER - near):
-                self._spawn_node(p, terrain)
-
-    def _spawn_node(self, p: WorldPlayer, terrain) -> None:
-        rnd = self._rendered()
-        for _ in range(8):
-            a, r = random.random() * math.tau, 8 + random.random() * (NODE_NEAR - 8)
-            x, y = (p.x + math.cos(a) * r) % terrain.W, p.y + math.sin(a) * r
-            if not (0 <= y < terrain.H):
-                continue
-            if rnd is not None:  # resource keyed to the biome you actually see
-                pool = BIOME_RES.get(rnd.biome(x, y))
-                if not pool:
+            pcx, pcy = int(p.x) // GRID, int(p.y) // GRID
+            for cy in range(pcy - cellr, pcy + cellr + 1):
+                if not (0 <= cy * GRID < terrain.H):
                     continue
-                kind = pool[((int(x) * 73856093) ^ (int(y) * 19349663)) % len(pool)]
-            else:
-                kind = terrain.resource_at(x, y)
-                if not kind:
-                    continue
-            self._rid += 1  # snap nodes to tile centres
-            self.resources[self._rid] = ResourceNode(
-                self._rid, kind, int(x) + 0.5, int(y) + 0.5, RESOURCE_AMOUNT)
-            return
+                for cx in range(pcx - cellr, pcx + cellr + 1):
+                    nd = self._cell_node(cx, cy, terrain)
+                    if nd is not None:
+                        want[(int(nd.x), int(nd.y))] = nd
+        self.resources = want
+        self._res_dirty = True
 
     def talk(self, pid: str) -> dict | None:
         """Talk to the nearest wanderer/merchant: a wanderer shares a rumour; a
@@ -833,6 +864,11 @@ class WorldGame:
                                      "era": self.era}
         return kind
 
+    def resources_payload(self) -> dict:
+        return {"type": "resources",
+                "resources": [{"kind": r.kind, "x": r.x, "y": r.y}
+                              for r in self.resources.values()]}
+
     def snapshot(self) -> dict:
         yr = self.year
         return {
@@ -847,8 +883,8 @@ class WorldGame:
                       "x": round(n.x, 1), "y": round(n.y, 1), "hp": n.hp,
                       "max_hp": n.max_hp, "hostile": n.target is not None, "spot": n.spot}
                      for n in self.npcs.values()],
-            "resources": [{"id": r.rid, "kind": r.kind, "x": round(r.x, 1), "y": round(r.y, 1)}
-                          for r in self.resources.values()],
+            # resources are sent separately (deterministic, only on change) via
+            # resources_payload(), not every tick.
             # real cities rising/falling on their timeline, and the famous ancient
             # sites once they've been founded — the world's living history
             "cities": [{"name": c["name"], "stage": st,
