@@ -52,8 +52,8 @@ WATER_SPEED = 0.5    # a boat moves at half pace (so sea monsters can catch you)
 # Resource nodes scattered around players, so resources are visible/populated and
 # finite per node (they re-seed as you move). Gather harvests the nearest one.
 RESOURCE_AMOUNT = 8
-MAX_NODES_PER_PLAYER = 150  # a thick scattering, clustered close so you can see them
-NODE_NEAR = 80
+MAX_NODES_PER_PLAYER = 450  # a thick scattering spread well out around you
+NODE_NEAR = 240            # ~3x further out than before
 GATHER_RANGE = 1.5  # must be on or right next to the node (1 square)
 TALK_RANGE = 3.0
 WORLD_W, WORLD_H = 86400, 43200  # tiles (for projecting city/site lon-lat)
