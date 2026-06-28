@@ -11,6 +11,15 @@ The signature mechanic — **Living History / Myth Engine**: a player's real
 actions become the **ruins** later players dig up and the **distorted myths**
 they inherit and argue about. The past literally becomes the future's content.
 
+> **Current version: the real-world Earth map** (`/world` — `client/world.js`,
+> `server/worldgame.py`). It is the active game and all current work lands here.
+> The image-derived **Mediterranean map** (`/` — `client/game.js`, `server/world.py`)
+> is the original test bed that the world map was ported from; it still runs but is
+> no longer the focus. Sections below that describe "the test map" predate the port —
+> the world map mirrors those systems (terrain, fog, boats, economy, NPCs, combat,
+> archaeology) on real Earth geography. See the [Changelog](#changelog) for the port
+> history and the latest land/water work.
+
 ---
 
 ## 1. Architecture
@@ -194,6 +203,18 @@ they inherit and argue about. The past literally becomes the future's content.
   roam water and hunt only players out in boats (the shore is safe). Both have
   **random speeds** (≈60% evadable / 40% catch you), and **give up the chase once
   you're out of their sight** (beyond your vision radius, `VISION_TILES`).
+- **NPCs respect their medium (world map).** Every mob has a medium — **land**,
+  **water**, or **air** (eagles/rocs go anywhere). Spawn *and* every movement step
+  pass through one check (`worldgame._medium_ok`) that reads the **exact rendered
+  tile colour** the player sees (`rendered.water_state`, kept byte-identical to the
+  client's `isWaterTile`): a land mob needs dry land, a **sea mob needs genuine open
+  ocean** (`is_open_water`, ≥60% water in a 7×7 — so it never sits on the baked
+  rivers/lakes/coastal slivers that read as "on land"), and an **unknown** tile
+  (untiled/unreadable) is never valid. An **end-of-tick sweep** despawns any mob that
+  still ends up off its medium (self-healing chunk-load flips and PIL-vs-browser JPEG
+  decode drift). Water classification is **blue-dominance** down to near-black
+  (`B > R+4 & B > G & B > 6`) so even the darkest polar/deep sea counts while dark
+  *land* (green-dominant forest, neutral tundra) and pure-black void never do.
 - **Combat:** attack adjacent hostiles (R or click). Damage = 6 + best weapon
   carried; armour blunts incoming damage. Kills drop coin + random loot
   (foraged / supplies / tools / weapons / armour / rare relics); sea monsters

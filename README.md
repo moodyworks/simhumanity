@@ -28,8 +28,16 @@ the future's content.
 ./run.sh
 ```
 
-Then open http://127.0.0.1:8000 . First run creates `.venv` and copies
-`.env.example` → `.env`. WASD/arrows to move, Space to gather.
+First run creates `.venv` and copies `.env.example` → `.env`. Then:
+
+- **`http://127.0.0.1:8000/world`** — the **real-world Earth map** (the current
+  version, all active work). Pick a city of the age, then play a pixel-for-pixel
+  patch of Earth.
+- `http://127.0.0.1:8000/` — the original **Mediterranean test map** the world map
+  was ported from (still runs; no longer the focus).
+
+WASD/arrows to move, click to walk, Space to gather. See **[`DESIGN.md`](DESIGN.md)**
+§10 for the full control list.
 
 ## Config (`.env`)
 
@@ -42,6 +50,24 @@ in `.env` so moving from this WSL2 workstation to the Debian VPS is trivial.
 turn them up for the fast early-game feel, down for long multi-week arcs.
 
 ## Status / roadmap
+
+**Current version — real-world Earth map** (`/world`):
+- The whole planet is tiled (1 source pixel = 1 tile, 86,400×43,200) from
+  public-domain imagery, streamed to the client in 3×3 chunk rings. Spawn on a
+  **city of the age**, then walk real Earth geography.
+- The Mediterranean test map's systems are **ported onto real Earth**: land/water
+  movement + boats, eras/year clock, fog of war, gather/build, archaeology + the
+  DeepSeek Myth Engine, economy/merchants, NPCs & combat, cities that rise/fall,
+  date-gated ancient sites, and a deterministic resource field.
+- **NPCs respect their medium.** Land/water/air mobs are gated at spawn and every
+  step by the **exact rendered tile colour** (kept identical between server and
+  client); sea mobs stay in **genuine open ocean** (not the baked rivers/lakes that
+  read as land); an end-of-tick sweep culls any mob left off its medium. Water is
+  **blue-dominance down to near-black**, so even the darkest polar/deep sea counts
+  while dark forest/tundra and pure-black void do not. (See `DESIGN.md` changelog.)
+
+The list below documents the systems as first built on the **Mediterranean test
+map** (`/`) — the world map mirrors them.
 
 **Done:**
 - Authoritative tick loop, multiplayer over WebSocket, move/gather, event-log backbone.
@@ -117,10 +143,14 @@ classification. Tweak the colour thresholds / biome noise there.
   `investigate` action and logged as `verify` events. Truth is checked against
   the log, not the AI, so it's grounded.
 
-**Next:**
-1. Crafting & ownable businesses: turn a workshop/market stall into passive
-   income; relic *provenance* (an artifact tied to a famous legend worth more).
-2. Pre-bake myths at the era transition so a culture *inherits* legends.
-3. Fame: track each player's notability so grand deeds become *their* legend.
-4. Anchor events (e.g. Younger Dryas); later eras beyond Bronze.
-5. NPC dialogue/myths via DeepSeek (the AI layer is already swappable).
+**Next** (on the world map — see `DESIGN.md` §12 Roadmap for detail):
+1. **Chunked "circle of influence" loading + a resource DB** — the world is too big
+   to hold in memory or ship at connect; load/unload terrain, NPCs, relics and
+   structures around each player and persist to a store (SQLite → Postgres).
+2. **City interiors** — walk into a city/region and explore an era-appropriate
+   sub-map (smith, trade, eat, sleep, heal, buy gear/plans), starting with Egypt.
+3. City ruins separately diggable; cities spawn their own NPCs/markets.
+4. Crafting & ownable businesses (passive income); relic *provenance* (an artifact
+   tied to a famous legend worth more); pre-baked myths a culture *inherits*.
+5. Fame/notability so grand deeds become *your* legend; anchor events (e.g. Younger
+   Dryas); running stamina so it isn't a free escape.
